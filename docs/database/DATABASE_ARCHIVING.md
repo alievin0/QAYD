@@ -1,728 +1,1299 @@
-# Data Archiving & Lifecycle — QAYD Database Layer
+# Database Archiving & Data Lifecycle Management — QAYD Database Layer
 Version: 1.0
 Status: Design Specification
 Module: Database
-Submodule: Archiving & Lifecycle
+Submodule: DATABASE_ARCHIVING
 ---
 
 # Purpose
 
-QAYD is a multi-tenant AI Financial Operating System. Every company's `journal_entries`,
-`journal_lines`, `ledger_entries`, `stock_movements`, `audit_logs`, and `notifications` grow without
-bound as long as the company is active: a mid-size tenant posts tens of thousands of journal lines per
-fiscal year, generates an audit-log row on every mutation (per the platform-wide audit rule), and can
-accumulate millions of `stock_movements` rows across warehouses over several years. None of this data
-may ever be hard-deleted while it is financially or legally relevant — posted accounting rows are
-immutable and Gulf/Kuwait commercial law requires books to be retrievable for a decade — but leaving all
-of it permanently in the hot, heavily-indexed operational tables degrades `INSERT` throughput, bloats
-indexes, slows `VACUUM`, and inflates storage cost across thousands of tenants sharing the same Postgres
-fleet.
+QAYD is an AI Financial Operating System processing double-entry accounting, sales, purchasing,
+banking, inventory, payroll, and tax data for multi-tenant companies across the Gulf, with Kuwait as
+the anchor jurisdiction. Every posted financial fact — `journal_entries`, `journal_lines`,
+`ledger_entries`, `invoice_items`, `bill_items`, `bank_transactions`, `stock_movements`,
+`payroll_items`, `tax_transactions`, and `audit_logs` — is immutable once posted and, by the
+platform-wide rule, is never hard-deleted. At QAYD's target scale (5,000+ active companies), this
+produces on the order of 300 million detail rows per year across the transactional tables. Left
+resident in the primary OLTP cluster indefinitely, this data does three damaging things at once: it
+degrades planner and cache efficiency for every tenant sharing the cluster (a "noisy neighbor via
+table bloat" failure mode), it inflates storage cost on the most expensive tier (NVMe-backed primary
+volumes), and it accumulates statutory retention exposure without any structured process to prove,
+search, or produce it on demand for an auditor or regulator.
 
-This document defines QAYD's data lifecycle: how records move from hot operational storage to warm
-low-cost SQL storage to cold object storage as they age past their operational usefulness but before
-their legal retention window expires; how that movement is automated, verified, and made reversible;
-how legal holds and per-company retention overrides are enforced; and how reporting, consolidation, and
-the AI layer behave when a query needs to reach into archived data. It is scoped strictly to lifecycle
-and archival concerns. Soft-delete semantics on individual rows, physical backup/DR, and query-level
-performance tuning are cross-referenced but owned by `DATABASE_SOFT_DELETES.md`,
-`DATABASE_BACKUP_RECOVERY.md`, and `DATABASE_PERFORMANCE.md` respectively — this document does not
-duplicate their content, only the parts of it that archiving depends on.
+This document defines the complete data lifecycle architecture that solves all three problems without
+ever violating the immutability and retention guarantees the Accounting Engine depends on. It
+specifies the three-tier **hot / warm / cold** model; the exact partition-detach SQL that moves data
+between tiers as an O(1) metadata operation rather than a row-by-row `DELETE`; the archival job
+architecture (Laravel-scheduled, queue-backed, idempotent, auditable); the policy engine that
+reconciles engineering cost pressure against statutory retention floors for Kuwait and the wider GCC;
+and the recovery, search, and restore mechanics that make archived data as legally discoverable as
+live data, just slower and cheaper to reach.
 
-Archiving in QAYD is never destructive in a way that cannot be reconstructed: every archived byte is
-represented by a manifest (row counts, checksums, storage location) that lets a restore operation
-reproduce it exactly. This document specifies that guarantee end-to-end: the SQL that moves data, the
-storage tiers it moves through, the jobs that automate the movement, the checks that prove nothing was
-lost, and the workflow that brings data back when a query, audit, or legal request needs it.
+This document builds directly on `DATABASE_PARTITIONING.md`, which establishes that every archivable
+table is declaratively partitioned from creation and introduces the illustrative `archived_partitions`
+catalog table and the base detach/export/re-attach mechanics. This document is the **owning
+specification** for everything downstream of "a partition has been detached": the complete
+`archived_partitions` schema, the policy engine, cold-tier storage format and encryption, the
+compliance retention matrix, and the search/restore/recovery workflows an auditor, a support engineer,
+or an AI Reporting Agent actually uses. It does not own live-cluster disaster recovery (WAL archiving,
+PITR, replica failover — owned by `DATABASE_BACKUP_RECOVERY.md`), partition creation/pruning mechanics
+(owned by `DATABASE_PARTITIONING.md`), or row-level tenant isolation policy definitions (owned by
+`ROW_LEVEL_SECURITY.md`) — it references and depends on all three.
 
-# Archiving vs Soft Delete vs Backup
+# Archive Strategy
 
-These three mechanisms are frequently confused because they all "keep data around after it stops being
-actively used." They solve different problems, operate at different granularities, and are triggered by
-different events. QAYD engineers must not substitute one for another.
+## Guiding principle
 
-| Dimension | Soft Delete | Archiving | Backup |
-|---|---|---|---|
-| Trigger | A user/AI action removes or voids a single record | A scheduled job moves records that crossed an age/status threshold | A scheduled snapshot of the entire database, independent of record content |
-| Granularity | Single row | A batch of rows sharing a partition key (date range, fiscal year, company) | Whole database / whole cluster |
-| Mechanism | `UPDATE ... SET deleted_at = now()` | `DETACH PARTITION`, bulk `INSERT ... SELECT` + `DELETE`, or export-and-drop | `pg_basebackup`, WAL archiving, or managed snapshot (RDS/Aurora-style) |
-| Reversibility | Instant — clear `deleted_at`, still in the same table, same indexes | Requires an explicit Restore-From-Archive operation (see below); not instant | Full point-in-time restore of an entire cluster/database, not a single row |
-| Where the data lives after | Same table, same tablespace, excluded by default scopes | A different table/schema (warm) or object storage (cold); no longer in the primary operational table | A separate storage system entirely (S3/R2 snapshot store); not attached to any live database |
-| Query visibility | Excluded from default Eloquent scopes; visible via `withTrashed()` to authorized users | Not visible to normal application queries at all; visible only via the Archive API / restore workflow | Not queryable — a backup is only restorable, never queried in place |
-| Who/what triggers it | End user action, AI-proposed deletion (with approval), reversing entries | The Archiving Scheduler (cron/queue), never a manual per-row action | Infrastructure automation (WAL shipping, nightly snapshot job) |
-| Owned by | `DATABASE_SOFT_DELETES.md` | This document | `DATABASE_BACKUP_RECOVERY.md` |
-| Primary purpose | Undo / audit trail for a single business action | Keep hot tables small and fast while data ages toward its retention limit | Disaster recovery from total data loss, ransomware, or catastrophic corruption |
+Archiving in QAYD is never a `DELETE`. It is always: **detach the partition (metadata-only) → export
+the detached table to durable storage → verify → catalog → drop the local copy only after
+verification**. A row that was posted five years ago and a row posted five seconds ago are the same
+row from a correctness standpoint; only its *tier* changes. This principle is what allows QAYD to
+promise both "your data is never deleted" (a hard product and legal commitment) and "the primary
+cluster stays small and fast" (an operational necessity) without those two promises being in tension.
 
-A row's lifecycle in QAYD is therefore: **live** → (optionally) **soft-deleted** (still hot) → **hot**
-(current + prior fiscal year, fully indexed) → **warm** (closed fiscal years / aged operational data,
-still SQL-queryable but on cheaper storage, fewer indexes) → **cold** (Parquet in Cloudflare R2, not
-directly queryable, restore-on-demand) → **eligible for legal purge** once the retention period and any
-legal hold both clear. Backups run in parallel across every stage and are not part of this chain.
+## The three-tier model
 
-# What Gets Archived
+| Tier | Location | Attached to parent? | Access latency | Who/what reads it |
+|---|---|---|---|---|
+| Hot | Primary Postgres, most recent 1–3 partitions | Yes | < 10 ms p95, cache-resident | Application OLTP paths: posting, live dashboards |
+| Warm | Primary Postgres, older partitions, still attached per the retention window `DATABASE_PARTITIONING.md` registers with `pg_partman` | Yes | < 250 ms p95, partition-pruned, not cache-resident | Reporting, trial balance for prior periods, auditors within the online window |
+| Cold | Cloudflare R2, Parquet/JSONL objects; partition detached and, after verification, dropped from Postgres | No | Seconds (metadata/search) to minutes (full rehydration) | Restore requests, legal holds, statutory audits beyond the online window |
 
-Four record families are archived on a recurring schedule. Eligibility is always evaluated per
-`company_id` — a company on a longer configured retention (see `# Retention Policy`) is skipped even if
-its peers are archived on schedule.
+A partition's hot→warm transition is a purely operational classification — no data moves, no SQL
+runs; it simply ages out of the range `pg_partman`'s `p_premake` keeps freshly created and cache-warm.
+The warm→cold transition is the one this document owns end-to-end: it is the `DETACH PARTITION` +
+export + catalog + drop pipeline described below, gated by both the physical retention window
+registered in `pg_partman` (`DATABASE_PARTITIONING.md`, e.g. 84 months for `journal_lines` and
+`ledger_entries`, 36 months for `audit_logs`) **and** the fiscal/legal gates in this document (fiscal
+period closed, no open audit, no legal hold — see Archive Policies).
 
-## 1. Closed Fiscal Years (Accounting)
+## What is archived, what is summarized, what never leaves hot
 
-`journal_entries`, `journal_lines`, and the `ledger_entries` projection for a `fiscal_year` become
-archival candidates only after ALL of the following hold:
+1. **Fully archived detail rows** — high-cardinality, append-only, immutable-once-posted:
+   `journal_lines`, `ledger_entries`, `invoice_items`, `bill_items`, `bank_transactions` (post
+   reconciliation only), `stock_movements`, `tax_transactions`, `payroll_items`, `audit_logs`
+   (`audit_log_payloads` follows the same partition and archives in lockstep with its parent
+   `audit_logs` row, per `DATABASE_PARTITIONING.md`). `ledger_entries` partitions are always detached
+   and archived in the same archive transaction as their corresponding `journal_lines` partitions —
+   never independently — so the two tables remain reconcilable for any period both still cover.
+2. **Header rows with a permanent lightweight index retained** — `journal_entries`, `invoices`,
+   `bills`, `sales_orders`, `purchase_orders`, `credit_notes`, `debit_notes`, `receipts`,
+   `vendor_payments`. Their detail lines archive on the schedule above; the header row itself is
+   additionally mirrored, at archive time, into a small permanent `archived_document_index` row
+   (`company_id`, `document_number`, `document_date`, `total_amount`, `currency_code`, `status`,
+   `counterparty_id`, `source_table`, `archived_partition_id`) so a company's document list, global
+   search, and "this record is archived — restore it" affordance never require a cold-tier hit merely
+   to render.
+3. **Never archived** — `accounts`, `account_types`, `customers`, `vendors`, `products`, `employees`,
+   `tax_codes`, `cost_centers`, `projects`, `companies`, `users`, `roles`, `permissions`,
+   `fiscal_years`, `fiscal_periods`. These are low-cardinality dimension/master tables; archiving them
+   would break every historical foreign key join from warm and cold detail rows back to their
+   reference data. They stay in hot Postgres for the life of the platform and are governed only by
+   the standard soft-delete rule (`deleted_at`), never by this pipeline.
 
-```sql
-SELECT fy.id, fy.company_id, fy.code, fy.status, fy.closed_at
-FROM fiscal_years fy
-WHERE fy.status = 'closed'
-  AND fy.closed_at < now() - interval '90 days'          -- closed-year cooling-off period
-  AND NOT EXISTS (
-      SELECT 1 FROM legal_holds lh
-      WHERE lh.company_id = fy.company_id
-        AND lh.record_type = 'fiscal_year'
-        AND lh.released_at IS NULL
-        AND (lh.scope->>'fiscal_year_id')::bigint = fy.id
-  );
-```
+## Fiscal-period gating
 
-The 90-day cooling-off window exists because a closed year can still be reopened for an audit adjustment
-within that window (see `# Edge Cases`). Fiscal periods within the year, and every `journal_line`,
-`ledger_entries` row, and dimension reference (`cost_center_id`, `project_id`) dated inside that fiscal
-year, move together as one atomic unit — accounting data is never archived at a finer grain than a full
-fiscal year, because trial balances and financial statements must reconstruct the whole year from a
-single tier.
-
-## 2. Audit Logs
-
-`audit_logs` rows are the highest-volume table in the platform (one row per mutation, platform-wide).
-They are archived by wall-clock age, independent of the entity they describe:
-
-```sql
-SELECT * FROM audit_logs
-WHERE created_at < now() - interval '13 months'   -- hot window: rolling 13 months
-ORDER BY created_at;
-```
-
-Audit logs are archived monthly (aligned to the monthly partitions described in `# Archiving
-Strategies`), never per-row, and never before their legal minimum (see `# Retention Policy`) is
-guaranteed to still be reachable in warm/cold tiers — audit logs are archived, never deleted, until the
-retention clock for the underlying record type also expires.
-
-## 3. Notifications
-
-`notifications` are operational, not financial. They carry no multi-year legal retention requirement:
+Age alone is necessary but not sufficient to archive a financial partition. Before an
+age-eligible partition is allowed to proceed past `DETACH` into export and drop, the archive job
+verifies:
 
 ```sql
-SELECT * FROM notifications
-WHERE created_at < now() - interval '90 days'
-  AND read_at IS NOT NULL;                 -- unread notifications are never auto-archived
+-- A partition covering [range_start, range_end) is archive-eligible only if every
+-- fiscal_period it overlaps is closed, and no company touched by the partition has
+-- an active legal hold covering that table/date range.
+SELECT NOT EXISTS (
+    SELECT 1 FROM fiscal_periods fp
+    WHERE fp.status <> 'closed'
+      AND fp.start_date < $range_end AND fp.end_date > $range_start
+) AS all_periods_closed,
+NOT EXISTS (
+    SELECT 1 FROM legal_holds lh
+    WHERE lh.status = 'active'
+      AND lh.scope @> jsonb_build_object('tables', jsonb_build_array($table_name))
+) AS no_blocking_hold;
 ```
 
-Because notifications have no legal hold surface and a short useful life, their "archive" tier is
-compressed cold storage only (skip warm) — see `# Hot/Warm/Cold Tiering`.
+If either check fails, the job logs `retained_past_threshold` on that candidate in `archive_jobs` and
+retries on the next scheduled run rather than skipping silently — a partition that is old enough by
+the physical clock but not yet closed/cleared is never force-archived.
 
-## 4. Historical Stock Movements
+## Tenant isolation inside shared partitions
 
-`stock_movements` are archived once (a) they are older than the configured window and (b) the inventory
-valuation for the period they belong to has been finalized (an open `inventory_valuations` run for that
-period blocks archiving, since valuation recomputation needs the raw movement rows):
+QAYD's partitions (per `DATABASE_PARTITIONING.md`) are keyed by time (`posting_date`, `created_at`) or
+by a hash of `company_id` at extreme single-tenant scale — either way, a single partition, and
+therefore a single archived object, typically contains rows belonging to **hundreds or thousands of
+different companies**. This has three concrete consequences this document must engineer around, since
+none of them are automatically true just because the live tables enforce row-level security:
+
+- **A per-company legal hold cannot change *when* a shared partition detaches** — detach is a
+  platform-wide, table-level operation. A hold instead blocks the *drop* and the *eventual cold-tier
+  purge* of any archived object proven (via `archived_partition_tenants`, below) to contain that
+  company's rows, even though the object also contains other companies' rows that are otherwise
+  purge-eligible.
+- **Row-level security is not automatically preserved across `DETACH`.** A detached partition is, the
+  instant `DETACH PARTITION` commits, an ordinary standalone table. Any protection that depended on
+  "this data is only ever reachable through the RLS-protected parent" no longer holds by construction.
+  As a defense-in-depth control independent of partition-RLS inheritance semantics, this document
+  requires every detached-but-not-yet-exported table to have `ALTER TABLE ... ENABLE ROW LEVEL
+  SECURITY` and the standard `company_isolation` policy (owned by `ROW_LEVEL_SECURITY.md`) re-applied
+  to it immediately as part of step (b) of the archive job below, and grants no interactive role
+  (human or application) direct `SELECT` on it — only the `qayd_archive_worker` service role may touch
+  a detached table, until it is either re-attached (regaining the parent's protection) or dropped.
+- **Search and restore must always filter by the requesting company**, even though the physical
+  Parquet/JSONL object they query is multi-tenant. See Searching and Restoring.
+
+## Ownership and automation boundary
+
+The pipeline is a first-class scheduled subsystem, not a manual DBA task:
+
+- A Laravel Console Command, `php artisan qayd:archive:run`, is registered on the scheduler:
+  `Schedule::command('qayd:archive:run')->dailyAt('02:15')`, fifteen minutes before
+  `pg_partman`'s own `partman-maintenance` `pg_cron` job at `02:00` has finished detaching
+  age-eligible partitions (per `DATABASE_PARTITIONING.md`, `retention_keep_table = true` means
+  `pg_partman` detaches but never drops — disposal is explicitly this pipeline's job).
+- The command enqueues one queued job per detached-but-unarchived candidate onto an isolated `archive`
+  Redis queue (`--queue=archive --tries=3 --backoff=300,900,3600`), processed by a worker pool separate
+  from the request-serving and webhook-delivery queues, so a slow R2 upload never starves user-facing
+  background work.
+- Every state transition is written to `audit_logs` (`action IN
+  ('partition.detached','partition.exported','partition.dropped','partition.restored')`,
+  `actor_type = 'system'`), giving the archive pipeline the same forensic trail as any business
+  mutation.
+
+## Partition-detach SQL
+
+Detach is metadata-only and safe against a live, continuously-written cluster:
 
 ```sql
-SELECT sm.* FROM stock_movements sm
-WHERE sm.created_at < now() - interval '24 months'
-  AND NOT EXISTS (
-      SELECT 1 FROM inventory_valuations iv
-      WHERE iv.company_id = sm.company_id
-        AND iv.warehouse_id = sm.warehouse_id
-        AND iv.status = 'in_progress'
-        AND sm.created_at BETWEEN iv.period_start AND iv.period_end
-  );
+-- Runs outside an explicit multi-statement transaction block (a requirement of CONCURRENTLY).
+-- Takes SHARE UPDATE EXCLUSIVE, not ACCESS EXCLUSIVE, so concurrent inserts into sibling
+-- partitions of journal_lines are never blocked.
+ALTER TABLE journal_lines DETACH PARTITION journal_lines_p2019_06 CONCURRENTLY;
+
+-- The partition is now an ordinary standalone table: still holds every row, still fully
+-- queryable by name, but excluded from all journal_lines-level scans, pruning, and (per the
+-- Tenant Isolation note above) excluded from the parent's inherited protections.
+ALTER TABLE journal_lines_p2019_06 ENABLE ROW LEVEL SECURITY;
+CREATE POLICY company_isolation ON journal_lines_p2019_06
+    USING (company_id = current_setting('app.current_company_id')::bigint);
+REVOKE ALL ON journal_lines_p2019_06 FROM qayd_app, qayd_readonly;
+GRANT SELECT ON journal_lines_p2019_06 TO qayd_archive_worker;
+
+-- Composite/lockstep detach for the reconciling ledger_entries partitions in the same range
+-- (all 16 hash branches' matching monthly sub-partition, since ledger_entries is
+-- HASH(company_id) -> RANGE(posting_date) per DATABASE_PARTITIONING.md):
+ALTER TABLE ledger_entries_h00 DETACH PARTITION ledger_entries_h00_p2019_06 CONCURRENTLY;
+-- ... repeated for h01..h15 by the same job, inside one archive_jobs "batch" grouping.
+
+-- Only after export + checksum verification succeed (see Recovery):
+DROP TABLE journal_lines_p2019_06;
 ```
 
-`stock_reservations` and `stock_counts` in progress are never archived; only settled `stock_movements`
-ledger rows are.
+Detach and drop are always two separate steps, never combined: if export or verification fails, the
+detached table is still sitting on local disk, fully intact and directly queryable by the archive
+worker role, and can be re-exported without touching a database backup at all.
 
-# Retention Policy
+## Archival job outline
 
-Gulf commercial and tax law sets the legal FLOOR for how long financial records must remain
-retrievable. QAYD ships conservative platform defaults but lets each company raise (never lower) its own
-retention, since a company may operate across multiple GCC jurisdictions simultaneously or be subject to
-a stricter internal audit policy.
-
-**Statutory floors referenced by the default configuration** (informational — Compliance owns the
-authoritative source; this table is the engineering default, not legal advice):
-
-| Jurisdiction | Basis | Minimum retention |
-|---|---|---|
-| Kuwait | Commercial Companies Law No. 1/2016 and Ministry of Commerce & Industry bookkeeping rules | 10 years from fiscal year-end |
-| Kuwait tax (KPO government-contract retention, zakat/tax filings) | Kuwait Tax Authority practice | 10 years, aligned to commercial law |
-| Saudi Arabia | ZATCA e-invoicing & bookkeeping regulations | 6 years from tax period end |
-| UAE | Federal Tax Authority record-keeping requirement | 5 years from the end of the relevant tax period |
-| Qatar / Bahrain / Oman | General commercial code bookkeeping rules | 5 years (platform default; verify per engagement) |
-
-QAYD's **platform default retention is 10 years** for all financial record types (fiscal years, journal
-data, invoices, bills, tax transactions) — the Kuwait floor, since Kuwait is the primary market — and
-this is overridable per company and per record type:
-
-```sql
-CREATE TABLE company_retention_policies (
-    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    company_id       BIGINT NOT NULL REFERENCES companies(id),
-    record_type      VARCHAR(64) NOT NULL,       -- 'fiscal_year' | 'audit_log' | 'notification' | 'stock_movement' | 'tax_transaction'
-    retention_years  SMALLINT NOT NULL DEFAULT 10,
-    legal_basis      VARCHAR(255) NULL,          -- free text citation, e.g. 'Kuwait CCL 1/2016 Art. 168'
-    is_indefinite    BOOLEAN NOT NULL DEFAULT false,  -- true overrides retention_years (never purge)
-    created_by       BIGINT NULL REFERENCES users(id),
-    updated_by       BIGINT NULL REFERENCES users(id),
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deleted_at       TIMESTAMPTZ NULL,
-    CONSTRAINT uq_company_record_type UNIQUE (company_id, record_type),
-    CONSTRAINT chk_retention_years CHECK (retention_years BETWEEN 1 AND 100)
-);
-CREATE INDEX idx_company_retention_policies_company ON company_retention_policies(company_id);
+```
+qayd:archive:run  (daily 02:15 Asia/Kuwait, 15 min after pg_partman's 02:00 maintenance window)
+|
++-- 1. SELECT candidates
+|      FROM pg_partition_tree view (pg_inherits + pg_class), WHERE the partition is currently
+|      detached (no longer a child in the parent's partition set) AND has no row yet in
+|      archived_partitions AND passes the fiscal-period + legal-hold gate above.
+|
++-- 2. For each candidate -> enqueue ArchivePartitionJob (queue=archive), grouped into an
+|      archive_jobs "batch_id" so lockstep tables (journal_lines + its ledger_entries siblings)
+|      are tracked, retried, and reported on together.
+|
+|      ArchivePartitionJob::handle()
+|      +-- a. pg_advisory_lock(hashtext(partition_name))         -- no two workers race one partition
+|      +-- b. Re-apply RLS + restrict grants to qayd_archive_worker (Tenant Isolation control)
+|      +-- c. Compute the per-company row-count breakdown for this partition
+|      |        SELECT company_id, count(*) FROM journal_lines_p2019_06 GROUP BY company_id;
+|      +-- d. Export to Parquet (Zstandard) via a Python worker (psycopg + pyarrow) reading the
+|      |        detached table directly; audit_log_payloads exports as gzip JSONL instead
+|      |        (JSONB content maps naturally to JSON Lines; Parquet would force a lossy flatten)
+|      +-- e. Client-side envelope-encrypt the exported object (AES-256-GCM, per-company-scoped
+|      |        data key wrapped by a KMS key) before upload
+|      +-- f. Upload object + manifest.json sidecar to Cloudflare R2
+|      +-- g. Re-download a sample and re-verify the row-hash checksum (defense against silent
+|      |        upload corruption)
+|      +-- h. INSERT INTO archived_partitions (...)              -- the authoritative catalog row
+|      +-- i. INSERT INTO archived_partition_tenants (...)        -- one row per company in (c)
+|      +-- j. INSERT INTO archived_document_index (...)           -- for header/master-transaction
+|      |        tables only, per the "header rows" category above
+|      +-- k. DROP TABLE journal_lines_p2019_06
+|      +-- l. UPDATE archived_partitions SET dropped_at = now()
+|      +-- m. audit_logs: action='partition.dropped'
+|      +-- n. pg_advisory_unlock(...)
+|
++-- 3. qayd:archive:verify (independent nightly job) samples 2% of archived_partitions rows,
+       re-downloads from R2, re-checksums, pages on-call on any mismatch.
 ```
 
-Resolution order when the archiving job needs a retention value for `(company_id, record_type)`:
-
-1. Row in `company_retention_policies` for that exact `(company_id, record_type)`.
-2. Platform default for that `record_type` (hardcoded in `config/archiving.php`).
-3. Global fallback: 10 years.
-
-`notifications` are the one record type explicitly exempted from the legal-retention floor — they carry
-`retention_years = 0` at the platform default level and are eligible for hard deletion after their cold
-copy ages out (see `# Edge Cases` for the interaction with any company that overrides this).
-
-Retention changes are themselves audited (`audit_logs`, `action = 'retention_policy.updated'`) and take
-effect only for future archiving runs — a retention *increase* immediately protects any data still in
-hot/warm storage and blocks any pending cold-export/purge for that company; a retention *decrease* never
-retroactively shortens the life of data already archived under the longer policy (see `# Legal Hold` for
-the analogous non-retroactivity rule).
-
-# Archiving Strategies
-
-QAYD uses three complementary strategies, chosen per table by access pattern and volume. All three are
-implemented as idempotent, resumable batch operations — never a single unbounded transaction.
-
-## Strategy A — Partition Detach-and-Archive (high-volume, date-ordered tables)
-
-`audit_logs`, `stock_movements`, and `journal_lines`/`ledger_entries` are declared as **range-partitioned
-by month** (audit_logs, stock_movements, notifications) or **by fiscal year** (journal_lines,
-ledger_entries) from creation. Archiving a range becomes a metadata-only operation instead of a row-by-row
-`DELETE`:
-
-```sql
--- Declarative partitioning at table-creation time (audit_logs shown; same pattern for stock_movements)
-CREATE TABLE audit_logs (
-    id            BIGINT GENERATED ALWAYS AS IDENTITY,
-    company_id    BIGINT NOT NULL REFERENCES companies(id),
-    branch_id     BIGINT NULL REFERENCES branches(id),
-    user_id       BIGINT NULL REFERENCES users(id),
-    action        VARCHAR(128) NOT NULL,
-    entity_type   VARCHAR(128) NOT NULL,
-    entity_id     BIGINT NOT NULL,
-    old_values    JSONB NULL,
-    new_values    JSONB NULL,
-    reason        TEXT NULL,
-    ip_address    INET NULL,
-    device_info   JSONB NULL,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (id, created_at)
-) PARTITION BY RANGE (created_at);
-
-CREATE INDEX idx_audit_logs_company_created ON audit_logs (company_id, created_at);
-CREATE INDEX idx_audit_logs_entity ON audit_logs (entity_type, entity_id);
-
--- Monthly partitions, created ahead of time by pg_partman (see # Automation)
-CREATE TABLE audit_logs_2026_06 PARTITION OF audit_logs
-    FOR VALUES FROM ('2026-06-01') TO ('2026-07-01');
-CREATE TABLE audit_logs_2026_07 PARTITION OF audit_logs
-    FOR VALUES FROM ('2026-07-01') TO ('2026-08-01');
-```
-
-Detaching a month that has aged past the hot window is a near-instant metadata change (PostgreSQL 14+
-supports `CONCURRENTLY` so it does not block concurrent reads/writes on sibling partitions):
-
-```sql
-ALTER TABLE audit_logs DETACH PARTITION audit_logs_2026_06 CONCURRENTLY;
-
--- The detached partition is now a standalone table. Move it into the archive schema
--- (this becomes the WARM tier — still full SQL, just outside the hot parent table):
-ALTER TABLE audit_logs_2026_06 SET SCHEMA archive;
-ALTER TABLE archive.audit_logs_2026_06 RENAME TO audit_logs_2026_06;
-COMMENT ON TABLE archive.audit_logs_2026_06 IS 'Archived 2026-08-01 by archive:run; source partition audit_logs_2026_06';
-```
-
-For `journal_lines`/`ledger_entries`, the partition key is the fiscal year, and a full year is detached
-in one statement only once every fiscal-year-closure precondition in `# What Gets Archived` is met:
-
-```sql
-ALTER TABLE journal_lines PARTITION BY RANGE (fiscal_year_id);  -- established at table creation, not retrofitted
-ALTER TABLE journal_lines DETACH PARTITION journal_lines_fy_2023 CONCURRENTLY;
-ALTER TABLE ledger_entries DETACH PARTITION ledger_entries_fy_2023 CONCURRENTLY;
-ALTER TABLE journal_lines_fy_2023 SET SCHEMA archive;
-ALTER TABLE ledger_entries_fy_2023 SET SCHEMA archive;
-```
-
-## Strategy B — Move to Cold/Archive Tables (low-volume or non-partitioned tables)
-
-Tables too small to justify native partitioning (e.g. `tax_returns`, `payroll_runs`) are archived with
-batched `INSERT ... SELECT` + `DELETE`, chunked by primary key range to bound lock time and avoid long
-transactions:
-
-```sql
-DO $$
-DECLARE
-    v_batch_size INT := 5000;
-    v_moved INT;
-BEGIN
-    LOOP
-        WITH moved AS (
-            DELETE FROM payroll_runs
-            WHERE id IN (
-                SELECT id FROM payroll_runs
-                WHERE company_id = $1
-                  AND status = 'closed'
-                  AND period_end < now() - interval '10 years'
-                ORDER BY id
-                LIMIT v_batch_size
-            )
-            RETURNING *
-        )
-        INSERT INTO archive.payroll_runs SELECT * FROM moved;
-
-        GET DIAGNOSTICS v_moved = ROW_COUNT;
-        EXIT WHEN v_moved = 0;
-        COMMIT;  -- release locks between batches
-    END LOOP;
-END $$;
-```
-
-`archive.*` tables share the exact column definitions of their source (created via
-`CREATE TABLE archive.foo (LIKE public.foo INCLUDING ALL)`), so no application code change is needed to
-query them through the read-only Archive API.
-
-## Strategy C — Export to R2/S3 as Parquet (cold tier)
-
-Once a warm-tier table (a detached partition or an `archive.*` table) ages past the **warm window**
-(default 2 years past archiving — configurable per `company_retention_policies`), it is converted to
-columnar Parquet and pushed to Cloudflare R2, then dropped from Postgres entirely. This is executed by a
-queue job (`ExportPartitionToColdStorageJob`) that shells out to a Python/DuckDB or `pg_parquet`-based
-exporter (the same AI-layer Python runtime used elsewhere in QAYD, invoked here purely as an ETL utility
-— it does not touch the database directly, per the platform's AI-layer rule; it reads via a read-replica
-connection string handed to it by Laravel):
-
-```bash
-# Executed by the queue worker, not by a human
-python3 export_to_parquet.py \
-  --dsn "$ARCHIVE_READ_REPLICA_DSN" \
-  --table "archive.audit_logs_2024_03" \
-  --company-scope-column company_id \
-  --output "s3://qayd-archive/audit_logs/company_id={company_id}/2024/03/part-000.parquet" \
-  --endpoint-url "$R2_ENDPOINT" \
-  --checksum-manifest
-```
+Laravel job skeleton:
 
 ```php
-// app/Jobs/ExportPartitionToColdStorageJob.php
-class ExportPartitionToColdStorageJob implements ShouldQueue
+// app/Jobs/ArchivePartitionJob.php
+class ArchivePartitionJob implements ShouldQueue
 {
-    use Queueable;
+    use Queueable, InteractsWithQueue, SerializesModels;
+
+    public int $tries = 3;
+    public array $backoff = [300, 900, 3600];
 
     public function __construct(
-        public string $schemaQualifiedTable,
-        public int $companyId,
-        public string $recordType,
+        private readonly string $table,
+        private readonly string $partitionName,
+        private readonly string $batchId,
     ) {}
 
-    public function handle(ArchiveManifestService $manifests): void
-    {
-        $rowCountBefore = DB::table($this->schemaQualifiedTable)->count();
+    public function handle(
+        ArchiveExportService $exporter,
+        ArchiveManifestRepository $manifests,
+        LegalHoldGuard $holdGuard,
+    ): void {
+        $lockKey = crc32($this->partitionName);
+        DB::statement('SELECT pg_advisory_lock(?)', [$lockKey]);
 
-        $result = Process::run([
-            'python3', base_path('scripts/export_to_parquet.py'),
-            '--dsn', config('archiving.read_replica_dsn'),
-            '--table', $this->schemaQualifiedTable,
-            '--output', $this->r2Path(),
-        ]);
+        try {
+            if ($manifests->alreadyArchived($this->partitionName)) {
+                return; // idempotent re-run after a retry or duplicate dispatch
+            }
 
-        abort_if(! $result->successful(), 500, 'Parquet export failed: '.$result->errorOutput());
+            $holdGuard->assertNoBlockingHold($this->table, $this->partitionName);
+            $exporter->reapplyRowLevelSecurity($this->partitionName);
 
-        $manifest = $manifests->recordExport(
-            table: $this->schemaQualifiedTable,
-            companyId: $this->companyId,
-            recordType: $this->recordType,
-            r2Path: $this->r2Path(),
-            rowCount: $rowCountBefore,
-            checksumSha256: $result->json('checksum_sha256'),
-        );
+            $tenants = $exporter->computeTenantFootprint($this->partitionName);
+            $export  = $exporter->exportToObjectStorage($this->table, $this->partitionName);
+            $exporter->verifyRoundTrip($export);
 
-        VerifyArchiveIntegrityJob::dispatch($manifest->id)->onQueue('archiving-verify');
+            $manifestId = $manifests->record($this->table, $this->partitionName, $export, $this->batchId);
+            $manifests->recordTenantFootprint($manifestId, $tenants);
+            $manifests->recordDocumentIndexIfHeaderTable($this->table, $this->partitionName, $manifestId);
+
+            DB::statement("DROP TABLE {$this->partitionName}");
+            $manifests->markDropped($manifestId);
+
+            AuditLog::create([
+                'action' => 'partition.dropped',
+                'auditable_type' => $this->table,
+                'auditable_id' => null,
+                'reason' => "batch={$this->batchId}",
+            ]);
+        } finally {
+            DB::statement('SELECT pg_advisory_unlock(?)', [$lockKey]);
+        }
     }
 }
 ```
 
-Only after `VerifyArchiveIntegrityJob` confirms the Parquet file's row count and checksum match the
-manifest (see `# Integrity & Verification Of Archives`) does a follow-up job drop the now-redundant
-Postgres table (`DROP TABLE archive.audit_logs_2024_03;`). Nothing is ever dropped from Postgres before
-its cold copy is verified.
+# Cold Storage
 
-# Hot/Warm/Cold Tiering
+## Definition and scope
 
-| Tier | Contents | Storage | Indexing | Query path | Typical age | Cost profile |
-|---|---|---|---|---|---|---|
-| **Hot** | Current + prior fiscal year; last 13 months of `audit_logs`; last 90 days of `notifications`; last 24 months of `stock_movements` | Primary Postgres cluster (attached partitions of the live tables) | Full index set, kept in shared_buffers/OS cache | Direct app queries via normal Eloquent models, sub-100ms p95 | 0–2 years | Highest — SSD-backed primary storage, replicated |
-| **Warm** | Detached partitions / `archive.*` tables — closed fiscal years and aged operational data within 2 years of aging out of hot, but not yet cold-exported | Same Postgres cluster (or a smaller archive-tier instance), `archive` schema | Primary key + `company_id` index only; secondary indexes dropped to save space | Archive API only (read-only, restore-on-demand), typically 200ms–2s | 2–4 years | Medium — same compute tier, less storage per row (fewer indexes), often on a cheaper storage class (e.g. gp3 vs io2) |
-| **Cold** | Parquet objects in Cloudflare R2, one file per partition/company/period | Cloudflare R2 (S3-compatible object storage) | None (columnar file, queried by DuckDB/Athena-style engine only during restore or ad-hoc analytics) | Not directly queryable by the app; requires Restore-From-Archive (minutes) or an offline analytics job | 4 years to end of legal retention | Lowest — object storage pricing, no compute attached at rest |
+Cold storage is the terminal tier short of statutory-authorized final disposal: a detached partition
+that has been exported, verified, cataloged, and dropped from Postgres. It exists exclusively as
+encrypted objects in Cloudflare R2, discoverable and rehydratable via the `archived_partitions`
+catalog, never accessed by direct SQL against the live cluster.
 
-Movement between tiers is always one direction forward (hot → warm → cold) under normal operation;
-movement backward only happens through the explicit Restore workflow (`# Restore From Archive`), never
-automatically. A company on `is_indefinite = true` retention still moves data hot → warm → cold on the
-same schedule — indefinite retention affects only whether the data is ever eligible for legal purge, not
-whether it is tiered for cost/performance reasons.
+## Object layout
 
-# Access To Archived Data
+```
+Bucket: qayd-archive-{environment}                       (e.g. qayd-archive-production)
 
-Archived data (warm or cold) is **never** exposed through the normal `/api/v1/**` resource endpoints
-used for live data. It has its own read-only surface:
+Key layout (one primary object + one manifest per archived partition):
+  /{table_name}/{yyyy}/{mm}/{partition_name}.parquet            (or .jsonl.gz for audit_log_payloads)
+  /{table_name}/{yyyy}/{mm}/{partition_name}.manifest.json
 
-| Method | Path | Permission | Description |
-|---|---|---|---|
-| GET | `/api/v1/archive/manifests` | `archiving.read` | List archive manifests for the active company (record type, period, tier, row count, location) |
-| GET | `/api/v1/archive/{manifest_id}/preview` | `archiving.read` | Read-only paginated preview of a **warm**-tier archive (queries `archive.*` directly); 403 if the manifest is cold-tier |
-| POST | `/api/v1/archive/{manifest_id}/restore-requests` | `archiving.restore` | Submit a Restore-From-Archive request (see `# Restore From Archive`); required for any cold-tier read |
-| GET | `/api/v1/archive/restore-requests/{id}` | `archiving.restore` | Poll restore-request status |
-| GET | `/api/v1/archive/restore-requests/{id}/data` | `archiving.restore` | Read the staged, restored rows during the restore window (auto-expires) |
+Full-tenant export (offboarding / legal-hold response), a derived, on-demand artifact:
+  /_exports/{company_id}/{export_job_id}/{table_name}.parquet
+```
 
-All five endpoints enforce `company_id` scoping exactly like live endpoints (via `X-Company-Id` and the
-requesting user's company membership) — archived data is exactly as tenant-isolated as live data.
-Warm-tier previews are genuinely read-only at the database level: the application's archive-read
-database role has `SELECT`-only grants on the `archive` schema and no `INSERT`/`UPDATE`/`DELETE`:
+Objects are keyed by table and date, not by company, because a single physical partition spans many
+tenants (see Tenant Isolation Inside Shared Partitions) — per-company scoping is metadata
+(`archived_partition_tenants`), not a key-space partition. Per-company full exports are a distinct,
+derived artifact generated on request (see Restoring), not the steady-state archival unit.
+
+## Format
+
+- **Parquet, Zstandard-compressed**, for every numeric-heavy accounting/inventory/payroll table
+  (`journal_lines`, `ledger_entries`, `invoice_items`, `bill_items`, `bank_transactions`,
+  `stock_movements`, `tax_transactions`, `payroll_items`). Parquet preserves column types (critically,
+  `NUMERIC(19,4)` precision, which a CSV export would silently degrade to a text/float round-trip
+  risk) and is directly queryable by columnar engines (DuckDB, Athena-style federated query) without a
+  full rehydration — see Searching.
+- **Gzip-compressed JSON Lines**, for `audit_log_payloads` specifically, whose `old_value`/`new_value`
+  columns are JSONB — a natural fit for line-delimited JSON rather than a forced Parquet schema
+  flatten that would lose nested-key flexibility.
+- Every object gets a `.manifest.json` sidecar, produced by the export step and duplicated into the
+  `archived_partitions.schema_snapshot` column so the schema at time of archiving survives even if the
+  live table's DDL evolves afterward (see Historical Data — schema drift):
+
+```json
+{
+  "table": "journal_lines",
+  "partition_name": "journal_lines_p2019_06",
+  "row_count": 1204331,
+  "min_posting_date": "2019-06-01",
+  "max_posting_date": "2019-06-30",
+  "column_schema_version": "v4",
+  "source_row_hash_sha256": "9f2b7e1c4a...",
+  "exported_at": "2026-07-14T02:31:07+03:00",
+  "exported_by_batch_id": "arch_2026w28_b17",
+  "tenant_count": 341,
+  "compliance_retain_until": "2029-06-30T23:59:59+03:00",
+  "postgres_partition_ddl": "CREATE TABLE journal_lines_p2019_06 PARTITION OF journal_lines FOR VALUES FROM ('2019-06-01') TO ('2019-07-01');"
+}
+```
+
+## Encryption and durability
+
+- R2 server-side encryption (AES-256) is enabled bucket-wide by default.
+- QAYD additionally client-side encrypts every object before upload using an envelope scheme: a
+  per-object 256-bit data key from `random_bytes(32)`, used with AES-256-GCM on the Parquet/JSONL
+  bytes; the data key itself is wrapped by a KMS master key and the wrapped key stored in
+  `archived_partitions.encrypted_data_key`. Because a company's rows can only be decrypted with a key
+  QAYD's own infrastructure operators do not hold in plaintext form outside the KMS boundary, this
+  satisfies the cryptographic-isolation expectation Gulf enterprise customers raise in vendor security
+  review — R2 storage-layer access alone is insufficient to read tenant data.
+- R2 does not expose native Object Lock/WORM at the time of writing. QAYD compensates with an
+  application-level WORM guarantee: `archived_partitions` is the authoritative ledger of what must
+  exist, and the independent nightly `qayd:archive:verify` job re-lists and re-checksums a sample via
+  the R2 S3-compatible API, alerting on any drift, missing object, or unauthorized overwrite (R2
+  object versioning is enabled, so an overwrite is detectable even without a hard lock).
+- Cross-region durability: R2 is inherently replicated across Cloudflare's network. QAYD additionally
+  never deletes an `archived_partitions` catalog row, even after the physical object's eventual
+  statutory-authorized purge — a redacted tombstone (`purged_at`, checksum preserved, payload
+  reference nulled) proves *that* the data existed and *when* it was lawfully disposed, independent of
+  whether the object itself survives.
+
+## Retrieval SLA
+
+| Restore type | Mechanism | Target latency |
+|---|---|---|
+| Single partition rehydration | Download Parquet, `COPY` into a freshly created matching partition, `ATTACH PARTITION` | < 5 minutes for a ~1M-row partition |
+| Single document lookup (one invoice + lines) | Federated point query via DuckDB reading the Parquet object directly from R2, no rehydration | < 3 seconds |
+| Full company export (offboarding, legal-hold response) | Batch job scanning `archived_partition_tenants` for the company, extracting matching rows across every affected object, zipped to a signed download URL | < 2 hours for a 10-year, 500 GB tenant |
+
+# Warm Storage
+
+## Definition and boundary
+
+Warm storage is still inside PostgreSQL, on the same cluster and disks as hot data — the boundary
+between hot and warm is an access-pattern classification, not a different storage medium. A partition
+is warm once it has aged out of `pg_partman`'s `p_premake` freshly-created window and is no longer
+expected to be resident in `shared_buffers` or the OS page cache under normal load, but it remains
+attached, indexed, and fully part of ordinary SQL queries against the parent table until it crosses
+the retention threshold and is detached per Archive Strategy.
+
+## Why warm exists as a distinct tier at all
+
+Without a warm tier, QAYD would face a binary choice: keep everything expensively hot, or archive
+aggressively and pay a cold-tier latency tax on routine prior-quarter reporting. Warm is the tier that
+makes "show me last year's trial balance" fast (partition-pruned SQL, sub-250ms) while still letting
+"show me the trial balance from seven years ago" be slow and cheap (cold-tier restore or federated
+query) — most reporting and audit demand is warm-tier, not cold-tier, and the retention windows in
+`DATABASE_PARTITIONING.md` (84 months for `journal_lines`/`ledger_entries`, 36 months for `audit_logs`)
+are sized specifically so that the overwhelming majority of "prior period" business questions never
+touch cold storage at all.
+
+## Indexing strategy differs between hot and warm
+
+All indexes defined on the parent table propagate to every partition automatically, so warm partitions
+carry the same B-tree indexes as hot ones by default (`(company_id, posting_date)`,
+`(account_id, posting_date)`, etc., per the canonical DDL in `DATABASE_PARTITIONING.md`). This
+document adds one refinement for the highest-volume append-only tables once a partition is confirmed
+warm (age > hot window, still attached): a scheduled `REINDEX ... (CONCURRENTLY)` pass converts the
+`created_at`/`posting_date` B-tree on partitions older than 12 months into a **BRIN** index instead,
+for `audit_logs` and `stock_movements` specifically — BRIN is near-free to maintain on append-only,
+naturally time-ordered data and shrinks the index footprint of a table whose B-tree would otherwise
+rival the heap in size:
 
 ```sql
-CREATE ROLE qayd_archive_reader NOLOGIN;
-GRANT USAGE ON SCHEMA archive TO qayd_archive_reader;
-GRANT SELECT ON ALL TABLES IN SCHEMA archive TO qayd_archive_reader;
-ALTER DEFAULT PRIVILEGES IN SCHEMA archive GRANT SELECT ON TABLES TO qayd_archive_reader;
--- The Laravel connection used for archive previews authenticates as a role that has been
--- GRANTed qayd_archive_reader and NOTHING else on the archive schema.
+-- Run once a monthly audit_logs partition is confirmed warm (age > 12 months, still attached):
+DROP INDEX CONCURRENTLY idx_audit_logs_p2025_03_created;
+CREATE INDEX CONCURRENTLY idx_audit_logs_p2025_03_created_brin
+    ON audit_logs_p2025_03 USING BRIN (created_at) WITH (pages_per_range = 32);
 ```
 
-Cold-tier data has no live SQL role at all — the only way to read it is the Restore-From-Archive
-workflow, which is intentionally asynchronous (never instant) so that pulling years of Parquet back into
-a database is a deliberate, audited, rate-limited action rather than an accidental query pattern.
+`journal_lines`, `ledger_entries`, and the other core accounting tables keep their B-tree indexes for
+the entire warm window unchanged, because auditors and the Reporting Agent run selective
+`account_id`/`company_id` lookups against warm accounting data far more often than the purely
+range-scan access pattern BRIN is optimized for.
 
-# Automation
+## Query behavior and the date-bound contract
 
-Archiving is never triggered manually in production; it runs on a fixed schedule via Laravel's task
-scheduler, which enqueues one job per company per record type so that a single slow company cannot block
-others:
+Warm-tier correctness and performance both depend on every query against a partitioned table
+including a predicate on the partition key, so the planner can prune. QAYD's `ArchivableRepository`
+base class (shared with `DATABASE_PARTITIONING.md`'s performance guidance) throws
+`UnboundedPartitionQueryException` in non-production environments for any query builder call about to
+execute without a `posting_date`/`created_at` bound, catching the mistake in CI rather than in a
+production slow-query page. This matters more, not less, once warm partitions exist in volume: an
+unbounded query against `journal_lines` with 84 months of monthly partitions attached scans up to 84
+partitions instead of one or two.
 
-```php
-// app/Console/Kernel.php (schedule() method)
-$schedule->command('archive:run --record-type=audit_log')
-    ->dailyAt('02:00')
-    ->withoutOverlapping(1440)          // Redis lock, 24h TTL — see below
-    ->onOneServer();
+## Warm-tier capacity ceiling
 
-$schedule->command('archive:run --record-type=notification')
-    ->dailyAt('02:15')
-    ->withoutOverlapping(1440)
-    ->onOneServer();
+QAYD targets 36–84 attached monthly partitions per table at steady state (the exact ceiling is the
+`pg_partman` retention window per table). Beyond that, planner overhead per query and the operational
+cost of `pg_dump`/`pg_restore` against a table with hundreds of partitions both grow; this ceiling is
+precisely why the retention windows in `DATABASE_PARTITIONING.md` were chosen at 84 (not, say, 240)
+months for the core accounting tables — the number is a deliberate balance between "keep enough online
+for routine multi-year reporting without a restore" and "keep the partition count in a range Postgres
+handles gracefully."
 
-$schedule->command('archive:run --record-type=stock_movement')
-    ->weeklyOn(1, '03:00')
-    ->withoutOverlapping(2880)
-    ->onOneServer();
+# Archive Policies
 
-$schedule->command('archive:run --record-type=fiscal_year')
-    ->monthlyOn(1, '04:00')             // fiscal-year closures happen rarely; monthly sweep is sufficient
-    ->withoutOverlapping(2880)
-    ->onOneServer();
+## Two-layer policy model
 
-$schedule->command('archive:cold-export')
-    ->dailyAt('05:00')
-    ->withoutOverlapping(1440)
-    ->onOneServer();
+Because a shared partition cannot have its detach timing vary per company (see Tenant Isolation Inside
+Shared Partitions), QAYD's policy engine is deliberately split into two layers with different scopes:
 
-$schedule->command('archive:verify')
-    ->dailyAt('06:00')
-    ->onOneServer();
-```
-
-`withoutOverlapping()` uses a Redis-backed lock (`schedule-{command}` key, TTL in minutes) so a slow run
-never double-executes; each `archive:run` invocation additionally acquires a per-company advisory lock
-before touching that company's data:
-
-```php
-DB::statement('SELECT pg_advisory_lock(hashtext(?))', ["archive:{$companyId}:{$recordType}"]);
-// ... do the work ...
-DB::statement('SELECT pg_advisory_unlock(hashtext(?))', ["archive:{$companyId}:{$recordType}"]);
-```
-
-**Partition lifecycle is delegated to `pg_partman`** rather than hand-rolled cron SQL, since it already
-solves premake, retention-based detach, and default-partition safety:
+1. **Table-level physical retention** — a single value per table, platform-wide, enforced by
+   `pg_partman`'s `part_config.retention` (owned and registered in `DATABASE_PARTITIONING.md`). This
+   layer answers "when does a partition detach." It cannot vary by company because the partition is
+   shared.
+2. **Company-level compliance and disposal policy** — `archive_policies`, owned by this document.
+   This layer answers "how long must this company's data survive in cold storage before it is even
+   eligible for the separate, rare, explicitly-authorized final purge procedure," and "does this
+   company have a legal hold that blocks disposal entirely." It can and does vary by company, because
+   it governs disposal timing and search/restore behavior, not detach timing.
 
 ```sql
-CREATE EXTENSION IF NOT EXISTS pg_partman;
-
-SELECT partman.create_parent(
-    p_parent_table  := 'public.audit_logs',
-    p_control       := 'created_at',
-    p_type          := 'range',
-    p_interval      := 'monthly',
-    p_premake       := 3               -- always have 3 months of future partitions ready
+-- System-level defaults, one row per archivable table, analogous in scope to account_types
+-- (a global classification table with no company_id) — the platform default every company
+-- inherits unless it has its own archive_policies override row.
+CREATE TABLE archive_tier_defaults (
+    id                    BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    table_name            TEXT NOT NULL UNIQUE,
+    domain                TEXT NOT NULL,          -- 'accounting' | 'inventory' | 'payroll' | 'tax' | 'audit' | 'ai'
+    cold_retention_years  INTEGER NOT NULL CHECK (cold_retention_years >= 0),
+    legal_basis           TEXT NOT NULL,          -- e.g. 'Kuwait Commercial Code Art. 72; GCC VAT norms'
+    auto_purge_eligible   BOOLEAN NOT NULL DEFAULT false,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-UPDATE partman.part_config
-SET retention                = '13 months',
-    retention_keep_table     = true,   -- detach, do NOT drop — Strategy A stops at "warm"
-    retention_keep_index     = false,  -- drop secondary indexes on detach to save space
-    infinite_time_partitions = true
-WHERE parent_table = 'public.audit_logs';
+INSERT INTO archive_tier_defaults (table_name, domain, cold_retention_years, legal_basis, auto_purge_eligible) VALUES
+    ('journal_lines',    'accounting', 10, 'Kuwait Commercial Code retention norm for commercial books', false),
+    ('ledger_entries',   'accounting', 10, 'Follows journal_lines for reconciliation integrity',          false),
+    ('bank_transactions','accounting', 10, 'Kuwait Commercial Code; CBK AML/CFT record-keeping norms',     false),
+    ('tax_transactions', 'tax',        10, 'GCC tax-authority record-retention norms (jurisdiction-specific, see Compliance)', false),
+    ('payroll_items',    'payroll',    10, 'Kuwait labor-record retention norms; post-employment minimum 5y', false),
+    ('stock_movements',  'inventory',   7, 'Commercial-books retention norm, lower-risk detail class',      true),
+    ('audit_logs',       'audit',      10, 'Chain-of-custody for all of the above; retained at least as long as the longest business-data floor', false),
+    ('ai_messages',      'ai',          3, 'Operational log, not financial evidence',                       true);
 
--- pg_partman's own maintenance run, scheduled via pg_cron or the Laravel scheduler shelling to psql:
-SELECT partman.run_maintenance_proc();
-```
-
-The Laravel scheduler calls `partman.run_maintenance_proc()` nightly ahead of `archive:run`, so newly
-detached-but-not-yet-relocated partitions are already sitting in the `archive` schema (pg_partman is
-configured with `retention_schema := 'archive'`) by the time the cold-export sweep runs. Every job run
-writes a row to `archive_job_runs` (started_at, finished_at, record_type, companies_processed,
-rows_moved, status, error) for observability; failures alert via the same on-call channel as other
-production incidents and are retried with exponential backoff (`retry_after`, `tries = 3` on the queued
-jobs).
-
-# Integrity & Verification Of Archives
-
-No row is considered archived until its move is provably lossless. Every export (Strategy B or C)
-produces a manifest row before the source data is touched, and a verification job confirms it after:
-
-```sql
-CREATE TABLE archive_manifests (
-    id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    company_id        BIGINT NOT NULL REFERENCES companies(id),
-    record_type       VARCHAR(64) NOT NULL,
-    source_table       VARCHAR(128) NOT NULL,     -- e.g. 'public.audit_logs' or 'archive.audit_logs_2024_03'
-    tier              VARCHAR(16) NOT NULL CHECK (tier IN ('warm','cold')),
-    storage_location  TEXT NOT NULL,              -- schema-qualified table name (warm) or R2 URI (cold)
-    row_count         BIGINT NOT NULL,
-    checksum_sha256   VARCHAR(64) NULL,           -- populated for cold (file-level checksum); NULL for warm
-    period_start      DATE NULL,
-    period_end        DATE NULL,
-    verified_at       TIMESTAMPTZ NULL,
-    verification_status VARCHAR(16) NOT NULL DEFAULT 'pending' CHECK (verification_status IN ('pending','passed','failed')),
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deleted_at        TIMESTAMPTZ NULL
+-- Per-company overrides / exceptions. company_id is NOT NULL here (unlike the defaults table
+-- above) because every row is a specific tenant's deviation from platform policy — an
+-- enterprise contract with a longer retention SLA, or a jurisdiction-specific extension for a
+-- company operating under Saudi ZATCA or UAE FTA rules rather than Kuwait's.
+CREATE TABLE archive_policies (
+    id                    BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    company_id            BIGINT NOT NULL REFERENCES companies(id),
+    branch_id             BIGINT NULL REFERENCES branches(id),
+    table_name            TEXT NOT NULL,
+    cold_retention_years  INTEGER NULL,              -- NULL = inherit archive_tier_defaults
+    jurisdiction          TEXT NULL,                 -- 'KW' | 'SA' | 'AE' | ... ISO 3166-1 alpha-2
+    legal_basis           TEXT NULL,
+    auto_purge_eligible   BOOLEAN NULL,
+    created_by            BIGINT NULL REFERENCES users(id),
+    updated_by            BIGINT NULL REFERENCES users(id),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at            TIMESTAMPTZ NULL,
+    UNIQUE (company_id, table_name)
 );
-CREATE INDEX idx_archive_manifests_company ON archive_manifests(company_id, record_type);
-CREATE UNIQUE INDEX uq_archive_manifests_source ON archive_manifests(source_table) WHERE deleted_at IS NULL;
+
+CREATE INDEX idx_archive_policies_company ON archive_policies (company_id) WHERE deleted_at IS NULL;
 ```
 
-`VerifyArchiveIntegrityJob` performs three checks and only sets `verification_status = 'passed'` if all
-three agree:
+The effective policy for any (company, table) pair is `COALESCE(archive_policies override,
+archive_tier_defaults)`, resolved by an `ArchivePolicyResolver` service consulted by every job that
+needs a retention figure (the nightly purge-eligibility scan, the Compliance reporting endpoint, and
+the restore-request expiry calculator).
 
-1. **Row-count reconciliation** — `SELECT COUNT(*)` against the archived location equals `row_count`
-   captured before the move.
-2. **Checksum verification** (cold only) — re-download the Parquet object's ETag/SHA-256 from R2 and
-   compare to `checksum_sha256`; a mismatch means silent corruption in transit or at rest.
-3. **Sample row-level diff** — for a random 0.1% sample of rows (by primary key), compare a hash of the
-   full row (`md5(row_to_json(t)::text)`) captured at export time against the same hash recomputed from
-   the archived copy, catching corruption that a naive row count would miss (e.g. truncated JSONB
-   columns).
-
-A failed verification **blocks** the follow-up `DROP TABLE` / partition-drop step indefinitely and pages
-the on-call database engineer — QAYD never deletes the hot/warm copy of anything until its cold copy is
-proven byte-identical. In addition to per-export verification, a scheduled **restore drill** runs
-monthly against a random sample of cold manifests: it restores each into a scratch schema, reruns the
-row-count and sample-hash checks, and records the result in `archive_manifests.verified_at`, catching
-bit-rot or R2-side corruption that occurred after the original verification passed.
-
-# Legal Hold
-
-A legal hold suspends archiving-to-purge (never archiving-to-warm/cold, which is a lossless move) for a
-scoped set of records — typically imposed for litigation, a regulatory audit, or a tax dispute:
+## Legal holds
 
 ```sql
 CREATE TABLE legal_holds (
-    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    company_id    BIGINT NOT NULL REFERENCES companies(id),
-    record_type   VARCHAR(64) NOT NULL,
-    scope         JSONB NOT NULL,        -- e.g. {"fiscal_year_id": 2023} or {"customer_id": 4821, "date_from": "2022-01-01", "date_to": "2024-12-31"}
-    reason        TEXT NOT NULL,
-    imposed_by    BIGINT NOT NULL REFERENCES users(id),
-    imposed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    released_by   BIGINT NULL REFERENCES users(id),
-    released_at   TIMESTAMPTZ NULL,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    company_id       BIGINT NOT NULL REFERENCES companies(id),
+    branch_id        BIGINT NULL REFERENCES branches(id),
+    case_reference   TEXT NOT NULL,
+    description      TEXT NOT NULL,
+    scope            JSONB NOT NULL,        -- {"tables": ["journal_lines","bills"], "date_from": "...", "date_to": "..."}
+    status           TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','released')),
+    imposed_by       BIGINT NOT NULL REFERENCES users(id),
+    imposed_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    released_by      BIGINT NULL REFERENCES users(id),
+    released_at      TIMESTAMPTZ NULL,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT chk_release_consistency CHECK (
+        (status = 'active' AND released_at IS NULL) OR
+        (status = 'released' AND released_at IS NOT NULL)
+    )
 );
-CREATE INDEX idx_legal_holds_company_active ON legal_holds(company_id, record_type) WHERE released_at IS NULL;
+
+CREATE INDEX idx_legal_holds_company_active ON legal_holds (company_id) WHERE status = 'active';
+CREATE INDEX idx_legal_holds_scope_gin ON legal_holds USING GIN (scope);
 ```
 
-Enforcement rules:
+A legal hold overrides every other policy signal: `auto_purge_eligible`, expired `cold_retention_years`,
+and even an approved `restore_requests.expires_at` cleanup are all suppressed for any partition the
+`archived_partition_tenants` junction proves contains a held company's rows. Only a user holding
+`database.legal_hold.manage` (mapped to Owner, CFO, and General Counsel-equivalent roles; never AI
+agents, per the platform AI-autonomy rule) may create or release a hold.
 
-- Every eligibility query in `# What Gets Archived` already excludes records under an active hold from
-  moving hot → warm/cold **only when the operation is a purge**; QAYD's design choice is that a hold
-  additionally freezes tier movement altogether for simplicity and auditability — held records stay hot
-  or wherever they currently are until released, rather than allowing warm/cold movement while blocking
-  only the final purge. This trades some storage cost for a much simpler mental model: "on hold" means
-  "frozen in place."
-- Placing a hold requires `legal.hold.create` (Owner, CFO, Auditor, External Auditor roles only) and is
-  itself an `audit_logs` entry with `reason` mandatory.
-- A hold is never silently auto-released; only an explicit `released_by`/`released_at` clears it, and
-  release requires the same permission tier as creation.
-- Holds are checked at the start of every archiving job run (`archive:run`) and again immediately before
-  any purge step — a hold placed mid-run aborts that company's remaining batch for the current run
-  (already-moved warm/cold data from earlier in the run is unaffected; the hold only stops what has not
-  yet moved and blocks any future purge).
-- A retention decrease (see `# Retention Policy`) can never make a held record eligible for purge before
-  the hold is released, regardless of how much the configured retention shrinks.
+Permission API — imposing a hold:
 
-# Impact On Reports & Consolidation
+```
+POST /api/v1/database/legal-holds
+```
 
-Financial statements, trial balances, and multi-company consolidation reports must be correct whether
-the fiscal year they cover is entirely hot, entirely warm, or split across tiers (a report spanning
-"last 3 fiscal years" against a company whose oldest of those years was just archived).
+```json
+{
+  "case_reference": "MOCI-2026-KW-00417",
+  "description": "Ministry of Commerce inquiry into FY2021-2023 VAT-equivalent filings",
+  "scope": {
+    "tables": ["journal_lines", "bills", "tax_transactions"],
+    "date_from": "2021-01-01",
+    "date_to": "2023-12-31"
+  }
+}
+```
 
-- **Reports scoped entirely to hot data** (the overwhelming majority — current/prior fiscal year) behave
-  exactly as documented in the Accounting module: they read `ledger_entries` directly.
-- **Reports that need a closed, archived fiscal year** (e.g. a 3-year trend report, or a consolidation
-  that rolls up a subsidiary whose books for that period are warm) use a `UNION ALL` view assembled at
-  query time by the Reporting service, not a permanent database view (permanent views over `archive.*`
-  would defeat the purpose of dropping secondary indexes on warm tables by forcing the planner to
-  consider them on every hot-table query):
+```json
+{
+  "success": true,
+  "data": {
+    "id": 88,
+    "company_id": 4821,
+    "case_reference": "MOCI-2026-KW-00417",
+    "status": "active",
+    "imposed_by": 17,
+    "imposed_at": "2026-07-16T09:12:03+03:00",
+    "affected_archived_partitions": 34,
+    "affected_warm_partitions": 6
+  },
+  "message": "Legal hold imposed. 34 archived and 6 warm partitions are now disposal-frozen for this company.",
+  "errors": [],
+  "meta": { "pagination": null },
+  "request_id": "7c2e0a3e-9c31-4b2a-9a55-3b214e6a9a11",
+  "timestamp": "2026-07-16T09:12:03Z"
+}
+```
+
+# Historical Data
+
+## What "historical" means precisely
+
+A row is historical, for the purposes of this document, once its owning `fiscal_period` is closed. A
+closed period is never reopened for ordinary editing (corrections happen via reversing/adjusting
+entries in a later open period, per the platform's immutability rule); this is what makes fiscal-period
+closure — not mere calendar age — the correctness gate for archiving, layered on top of the
+age-based `pg_partman` retention window described in Archive Strategy.
+
+## The permanent closing-balance aggregate
+
+The overwhelming majority of "historical" reporting demand is not row-level drill-down; it is
+opening-balance carry-forward and N-year comparative trend lines (a five-year trial balance
+comparison, a "revenue this year vs. the same month three years ago" chart). Forcing every such query
+to touch warm or, worse, cold `ledger_entries` would be wasteful given how predictable the aggregate
+shape is. QAYD therefore maintains a permanent, tiny, **never-archived** rollup table, populated as the
+final step of each fiscal period's close workflow (owned by the Accounting Engine module) and
+re-validated against `ledger_entries` before that period's partitions become archive-eligible:
 
 ```sql
--- Constructed dynamically by ReportQueryBuilder when a requested date range intersects archived fiscal years
-SELECT * FROM ledger_entries WHERE company_id = :company_id AND fiscal_year_id = ANY(:hot_fy_ids)
-UNION ALL
-SELECT * FROM archive.ledger_entries_fy_2023 WHERE company_id = :company_id
-UNION ALL
-SELECT * FROM archive.ledger_entries_fy_2022 WHERE company_id = :company_id;
+CREATE TABLE account_period_balances (
+    id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    company_id          BIGINT NOT NULL REFERENCES companies(id),
+    branch_id           BIGINT NULL REFERENCES branches(id),
+    fiscal_period_id    BIGINT NOT NULL REFERENCES fiscal_periods(id),
+    account_id           BIGINT NOT NULL REFERENCES accounts(id),
+    cost_center_id       BIGINT NULL REFERENCES cost_centers(id),
+    opening_debit        NUMERIC(19,4) NOT NULL DEFAULT 0,
+    opening_credit       NUMERIC(19,4) NOT NULL DEFAULT 0,
+    period_debit         NUMERIC(19,4) NOT NULL DEFAULT 0,
+    period_credit        NUMERIC(19,4) NOT NULL DEFAULT 0,
+    closing_debit         NUMERIC(19,4) NOT NULL DEFAULT 0,
+    closing_credit        NUMERIC(19,4) NOT NULL DEFAULT 0,
+    source_archived_partition_id BIGINT NULL REFERENCES archived_partitions(id),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (company_id, fiscal_period_id, account_id, cost_center_id)
+);
+
+CREATE INDEX idx_account_period_balances_lookup
+    ON account_period_balances (company_id, account_id, fiscal_period_id);
 ```
 
-- **Reports that need cold-tier data** cannot be served synchronously. The Reporting service detects
-  this at request time (by checking `archive_manifests` for a `tier = 'cold'` match on the requested
-  period) and returns `202 Accepted` with a `report_runs` row in `status = 'awaiting_restore'`, which
-  automatically triggers a Restore-From-Archive request; the report completes once the restore lands,
-  and the caller is notified via the platform's realtime channel (Reverb) exactly like any other
-  long-running `report_runs` job.
-- **Consolidation** (parent company rolling up subsidiaries) applies the same rule per subsidiary: if
-  subsidiary B's relevant fiscal year is warm while subsidiary A's is hot, the consolidation job unions
-  across tiers per subsidiary before aggregating; if any subsidiary's data is cold, the entire
-  consolidation run waits on that subsidiary's restore rather than silently omitting it — a consolidated
-  financial statement is never allowed to be partially complete without an explicit warning surfaced to
-  the requester.
-- Trial balance opening-balance carryforward (`SUM` of all prior years to establish an opening balance
-  for the earliest reported year) is precomputed and stored at the moment a fiscal year is closed
-  (`fiscal_years.opening_balance_snapshot JSONB`), specifically so that archiving older years never
-  requires touching them to compute a later year's opening balance.
+`source_archived_partition_id` is populated (nullable until then) once the underlying `ledger_entries`
+partition actually archives, giving every closing-balance row a documented lineage back to exactly
+which cold object it was last validated against — an auditor questioning a five-year-old opening
+balance can be pointed at both the aggregate row and its verifiable source object in one hop.
 
-# Restore From Archive
+## Schema drift across archived generations
 
-Restoring is always request-driven, permissioned, audited, and time-boxed. It never mutates the archive
-copy — a restore is always a read of the archive into a new staging location, never a move.
+QAYD's schema evolves — a column gets added, a `CHECK` constraint tightens, an enum grows a new value
+— over a platform lifetime measured in years, while individual archived objects can be a decade old by
+the time anyone reads them again. Every `archived_partitions` row carries the exact column set, types,
+and constraints of the source table **at the moment of export** in its `schema_snapshot` JSONB column
+(sourced from `information_schema.columns` at export time, not reconstructed later). A restore that
+targets today's live schema (see Restoring) runs the column list through the same migration-mapping
+table Laravel's own migration history already provides, adding `NULL`/`DEFAULT` for columns that did
+not exist when the data was archived and dropping columns that have since been removed from the live
+schema (with those values preserved in the restore staging table for audit, never silently discarded).
 
-**Workflow:**
+# Performance
+
+## Partition pruning is the entire performance story for warm data
+
+Every benefit warm storage provides collapses to one Postgres planner behavior: constraint exclusion
+over partition bounds. A query bounded by `posting_date` against `journal_lines` with 84 monthly
+partitions attached opens only the 1–3 partitions the predicate can possibly match; an unbounded query
+opens all 84. This is why the `ArchivableRepository` date-bound contract (Warm Storage, above) is
+treated as a correctness rule in CI, not merely a performance suggestion.
+
+```sql
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT account_id, SUM(base_debit), SUM(base_credit)
+FROM journal_lines
+WHERE company_id = 4821
+  AND posting_date >= '2025-01-01' AND posting_date < '2025-04-01'
+GROUP BY account_id;
+-- Plan: "Partitions removed by initial pruning: 81" (of 84 attached) — the query touches 3.
+```
+
+## Benchmarks (representative, 5,000-tenant scale)
+
+| Scenario | Rows touched | p95 latency | Tier |
+|---|---|---|---|
+| Post a journal entry (current month) | 1 partition, single-digit rows | 4 ms | Hot |
+| Trial balance, current fiscal year | 3–12 partitions | 90 ms | Hot/Warm boundary |
+| Prior-year comparative report (Y-1, Y-2, Y-3) | 36 partitions, pruned | 210 ms | Warm |
+| Single archived invoice lookup via manifest + federated query | 1 R2 object, no rehydration | 2.1 s | Cold |
+| Full partition rehydration (1M rows) | 1 object → 1 new partition | 4 min | Cold → Warm |
+| Full 10-year, 500 GB tenant export | ~10,000 objects scanned | 95 min | Cold |
+
+## Vacuum and statistics before detach
+
+A partition about to be detached and exported benefits from one final `VACUUM (ANALYZE)` immediately
+before the export read, both to guarantee the visibility map is current (so the sequential export scan
+skips dead tuples cheaply) and so the row-count and checksum computed for the manifest reflect a
+freshly-settled table rather than one with in-flight autovacuum activity racing the export:
+
+```sql
+VACUUM (ANALYZE) journal_lines_p2019_06;
+```
+
+This is scheduled as step 0 of `ArchivePartitionJob`, before the advisory lock's protected section
+begins, since `VACUUM` does not require exclusive access and gains nothing from being inside the lock.
+
+## Anti-patterns
+
+- **Never** query a warm or cold-eligible table without a partition-key predicate "just this once" —
+  there is no such thing as a one-off unbounded scan on an 80-partition table that stays cheap; the
+  `UnboundedPartitionQueryException` guard exists specifically because "just this once" is how
+  production incidents on partitioned tables actually start.
+- **Never** treat `archived_partitions.row_count` as a substitute for re-verifying the checksum before
+  trusting a restored dataset — a truncated export can still report a plausible row count if the
+  truncation happened mid-file after the count was already materialized client-side.
+- **Never** let application code assume a company's full history is always in exactly one physical
+  location — by design, a company's data is hot, warm, and cold simultaneously (different periods in
+  different tiers), and any "export everything for company X" feature must walk all three, not just
+  query the live tables.
+- **Never** run `ArchivePartitionJob` outside the isolated `archive` queue — its steps (Python export
+  subprocess, R2 upload, re-download verification) have a fundamentally different latency and failure
+  profile than request-serving background jobs and will starve them if co-queued.
+
+# Compliance (Gulf/Kuwait financial retention)
+
+## Purpose of this section
+
+Retention is a legal floor; archiving is an engineering ceiling. The policy engine in Archive Policies
+exists specifically so those two constraints are reconciled explicitly, in data, rather than emerging
+by accident from an engineering default. The figures below reflect commonly cited Gulf retention norms
+as of this document's writing and are deliberately made **configurable per company** via
+`archive_policies` rather than hardcoded, precisely because exact statutory minimums vary by entity
+type, license category, and amendment history, and QAYD's compliance/legal function — not this
+engineering document — is the authority of record for confirming the exact figure applicable to a
+specific customer before go-live in a given jurisdiction.
+
+## Jurisdictional retention matrix
+
+| Jurisdiction | Instrument (commonly cited basis) | Typical minimum retention | Applies to |
+|---|---|---|---|
+| Kuwait | Commercial Code (Law No. 68/1980) and Companies Law No. 1/2016 | 10 years from fiscal year end | Commercial books, journals, vouchers, correspondence |
+| Kuwait | Central Bank of Kuwait AML/CFT instructions, Law No. 106/2013 | 10 years (regulated financial-service tenants only) | Customer due-diligence and transaction records |
+| Kuwait | Public Authority for Manpower / labor-record norms | 5 years post-employment minimum | `payroll_runs`, `payroll_items`, `payslips`, `employees` |
+| Saudi Arabia | ZATCA e-invoicing regulations; Saudi Companies Law | 6 years (tax/e-invoicing); up to 10 years (certain company records) | `invoices`, `tax_transactions`, `journal_lines` for SA-jurisdiction entities |
+| UAE | Federal Tax Authority (FTA) VAT executive regulations | 5 years (standard); 15 years (real-estate-related records) | `tax_transactions`, `invoices`, `bills` for AE-jurisdiction entities |
+| GCC (general) | VAT/e-invoicing frameworks where implemented | 5–6 years typical | Tax-relevant transaction detail |
+
+Kuwait has not, at the time of this document, implemented a domestic VAT; QAYD's Kuwait-jurisdiction
+tenants are governed by the Commercial Code retention norm above rather than a VAT-specific record-
+keeping rule, while AED/SAR-denominated tenants operating under UAE or Saudi tax registration inherit
+the VAT/e-invoicing figures instead — this is exactly why `archive_policies.jurisdiction` is a
+per-company field rather than a platform-wide constant.
+
+## Why the retention floor is a hard `AND`, never an `OR`, with engineering convenience
+
+The fiscal-period gate in Archive Strategy and the `cold_retention_years` figure in Archive Policies
+compose as a logical **AND** at every decision point: a partition may only move toward eventual
+disposal if it is *both* past the engineering-convenience threshold *and* past its compliance floor
+*and* free of any active legal hold. It is never sufficient for a partition to merely be old by the
+clock. This is enforced structurally, not just by convention — the purge-eligibility query itself
+encodes all three:
+
+```sql
+SELECT ap.id
+FROM archived_partitions ap
+JOIN archive_tier_defaults atd ON atd.table_name = ap.source_table
+WHERE ap.dropped_at IS NOT NULL
+  AND ap.purged_at IS NULL
+  AND ap.created_at < now() - (COALESCE(
+        (SELECT MAX(pol.cold_retention_years) FROM archive_policies pol
+           JOIN archived_partition_tenants apt ON apt.company_id = pol.company_id
+          WHERE apt.archived_partition_id = ap.id AND pol.table_name = ap.source_table),
+        atd.cold_retention_years
+      ) || ' years')::interval
+  AND NOT EXISTS (
+        SELECT 1 FROM archived_partition_tenants apt
+        JOIN legal_holds lh ON lh.company_id = apt.company_id AND lh.status = 'active'
+        WHERE apt.archived_partition_id = ap.id
+          AND lh.scope @> jsonb_build_object('tables', jsonb_build_array(ap.source_table))
+      );
+```
+
+Note the `MAX(pol.cold_retention_years)` across every company touched by a shared object: because one
+archived partition can serve many tenants with different jurisdictions, the object as a whole is only
+purge-eligible once **every** tenant it contains has individually cleared its own floor — the strictest
+tenant's requirement governs the whole shared object. This query never runs automatically to completion
+— it only ever *proposes* candidates to a human-gated final purge procedure (see Recovery), and results
+are always reviewed by a holder of `database.archive.purge.approve` before any object is destroyed.
+
+## Data residency and cross-border transfer
+
+Cloudflare R2 buckets for QAYD's Gulf tenant base are provisioned in a region configuration agreed with
+each enterprise customer's compliance function; where a customer's contract or local regulator requires
+in-region residency and no suitable hyperscale region exists yet, QAYD's fallback is
+customer-managed-key encryption plus a documented data-processing addendum, so that even if bytes
+transit through a non-Gulf region, no party other than the customer (via their KMS key) can read
+plaintext content — satisfying the substance of a residency requirement even where infrastructure
+geography cannot yet satisfy its letter.
+
+## Right-to-erasure conflicts
+
+Where a company's end customer (e.g., an individual named on an invoice) asserts a personal-data
+erasure request under an applicable data-protection regime, QAYD's platform position is that **financial
+retention law overrides a personal-data erasure request for the specific fields required to satisfy
+that retention obligation** (amounts, dates, tax identifiers, transaction references) — this is a
+standard, well-established carve-out in data-protection frameworks generally, not a QAYD-specific
+policy. What QAYD *can* do on such a request, and does via a scoped redaction job rather than deletion,
+is null out genuinely non-essential personally identifying free-text fields (e.g., a customer contact's
+personal notes field) on both the live and, if already archived, the cold-tier record's next-restore
+pass — the retained financial fact survives; incidental personal narrative attached to it does not.
+
+## Compliance attestation
+
+`GET /api/v1/database/compliance/retention-report?company_id=4821` produces a signed, timestamped PDF
++ JSON attestation for exactly this purpose — "prove what you have retained, since when, under which
+policy" — consumed by external auditors and regulators without granting them direct data access:
+
+```json
+{
+  "success": true,
+  "data": {
+    "company_id": 4821,
+    "jurisdiction": "KW",
+    "generated_at": "2026-07-16T10:00:00+03:00",
+    "tables": [
+      { "table_name": "journal_lines", "effective_retention_years": 10, "legal_basis": "Kuwait Commercial Code Art. 72", "oldest_available_record": "2016-04-01", "active_legal_holds": 1 },
+      { "table_name": "tax_transactions", "effective_retention_years": 10, "legal_basis": "Kuwait Commercial Code Art. 72 (no domestic VAT regime)", "oldest_available_record": "2016-04-01", "active_legal_holds": 0 }
+    ]
+  },
+  "message": "Retention attestation generated.",
+  "errors": [],
+  "meta": { "pagination": null },
+  "request_id": "b1a9e6c0-2211-4f3a-9b8d-2b6a7c9d0e12",
+  "timestamp": "2026-07-16T10:00:00Z"
+}
+```
+
+# Recovery
+
+## Archival recovery vs. disaster recovery
+
+These are deliberately distinct concerns owned by different documents. Disaster recovery
+(`DATABASE_BACKUP_RECOVERY.md`) answers "the primary cluster is damaged or lost; restore it from WAL +
+base backup to a point in time." Archival recovery, owned here, answers a narrower and much more
+common question: "this specific partition was correctly detached, exported, and dropped months or
+years ago; bring its data back into a queryable state." The two only intersect in one edge case
+(Recovery — Edge Case, below): a disaster-recovery restore of the primary cluster to a point in time
+*before* a partition was dropped will bring that partition back as a live, attached partition, exactly
+as if the archive job had never run — this is expected and correct, and the archive job's idempotency
+check (`manifests->alreadyArchived`) prevents it from being re-archived and re-exported redundantly.
+
+## RPO/RTO by tier
+
+| Tier | Recovery Point Objective | Recovery Time Objective |
+|---|---|---|
+| Hot/Warm (live cluster) | Seconds (continuous WAL streaming, owned by Backup & Recovery) | Minutes (replica promotion) |
+| Detached-but-not-yet-dropped (local safety window) | Zero — no export step involved, re-run export from local table | Minutes |
+| Cold (R2, dropped locally) | Zero for data already exported and checksum-verified | Single partition: minutes. Full tenant: hours |
+
+## Local safety window before drop
+
+Every detached partition remains on local disk, unattached but undropped, for a minimum 14-day safety
+window after successful export and verification, specifically so a checksum mismatch discovered by the
+nightly `qayd:archive:verify` sampler — or a downstream discovery that an export was subtly incomplete
+— can be corrected by re-exporting from the still-present local table rather than performing a full
+cold-tier restore. Only after the window elapses **and** a human operator holding
+`database.archive.drop.approve` confirms the `archived_partitions` row's checksum against the R2 object
+does the scheduled drop proceed; this confirmation is itself logged to `audit_logs`.
+
+## Partition reattachment SQL
+
+```sql
+-- Step 1: recreate a table with the archived partition's shape (from schema_snapshot,
+-- not from today's live journal_lines definition, to avoid silently coercing old data
+-- into a schema it never actually had).
+CREATE TABLE journal_lines_p2019_06_restored (LIKE journal_lines);
+
+-- Step 2: load the verified Parquet object (via a Python/Arrow loader, or \copy for the
+-- csv_gz fallback format) into the new table.
+-- (loader invocation shown in Restoring, below)
+
+-- Step 3: validate the restored data satisfies the partition bound BEFORE attaching, using
+-- NOT VALID + VALIDATE so the table remains usable during the (potentially slow) validation
+-- scan rather than blocking on it up front.
+ALTER TABLE journal_lines_p2019_06_restored
+    ADD CONSTRAINT chk_bound CHECK (posting_date >= '2019-06-01' AND posting_date < '2019-07-01')
+    NOT VALID;
+ALTER TABLE journal_lines_p2019_06_restored VALIDATE CONSTRAINT chk_bound;
+
+-- Step 4: attach. PostgreSQL uses the now-validated CHECK constraint to skip its own
+-- redundant full-table validation scan on ATTACH.
+ALTER TABLE journal_lines ATTACH PARTITION journal_lines_p2019_06_restored
+    FOR VALUES FROM ('2019-06-01') TO ('2019-07-01');
+ALTER TABLE journal_lines_p2019_06_restored DROP CONSTRAINT chk_bound;  -- redundant post-attach
+
+-- Step 5: re-run the same lockstep restore for the corresponding ledger_entries hash-branch
+-- sub-partitions, since the two tables must remain reconcilable once both are live again.
+```
+
+## Recovery drills
+
+A quarterly, calendar-scheduled drill restores one randomly selected archived partition per major
+table into a non-production database, verifies row count and checksum against the manifest, and
+verifies the restored `journal_lines` partition reconciles against its `ledger_entries` counterpart
+(`SUM(debit) - SUM(credit)` per account matches). The drill's pass/fail result and duration are written
+to a `recovery_drill_log` entry consumed by the Compliance attestation report above, so "we have tested
+that our archives actually restore" is itself an auditable, timestamped claim rather than an assumption.
+
+# Searching
+
+## Search is tier-aware, not tier-blind
+
+A search across a company's full history must not force a cold-tier hit merely to answer "does this
+exist," because the vast majority of searches resolve against hot/warm data or the permanent
+`archived_document_index`/`account_period_balances` summaries without ever touching R2:
+
+| Tier | Search mechanism |
+|---|---|
+| Hot/Warm | Ordinary indexed SQL against the live partitioned tables |
+| Header/summary, any age | `archived_document_index` — permanent, never archived, full-text + structured index |
+| Cold, metadata only | `archived_partitions` + `archived_partition_tenants`, indexed by table/date-range/company |
+| Cold, content | Federated point query via DuckDB reading the target Parquet object(s) directly from R2, or a full restore for open-ended exploration |
+
+## Manifest search index
+
+```sql
+ALTER TABLE archived_partitions ADD COLUMN search_vector TSVECTOR
+    GENERATED ALWAYS AS (to_tsvector('simple', source_table || ' ' || partition_name)) STORED;
+
+CREATE INDEX idx_archived_partitions_search ON archived_partitions USING GIN (search_vector);
+CREATE INDEX idx_archived_partitions_table_range
+    ON archived_partitions (source_table, range_start, range_end);
+CREATE INDEX idx_archived_partition_tenants_company
+    ON archived_partition_tenants (company_id, archived_partition_id);
+```
+
+A company-scoped search for "everything archived that could contain invoice INV-2019-00417" resolves
+in two hops: `archived_document_index` for an immediate header hit (the common case — this is why the
+index exists), falling back to `archived_partition_tenants` filtered by `company_id` joined to
+`archived_partitions` filtered by the invoice's known date range, to locate the specific object(s) to
+query or restore for line-item drill-down.
+
+## Federated cold-tier content query
+
+For ad-hoc exploration that does not justify a full rehydration, QAYD's `qayd:archive:search` command
+line and the API below use DuckDB's `httpfs` extension to query a Parquet object directly over HTTPS
+from R2 without downloading or restoring it:
+
+```sql
+INSTALL httpfs; LOAD httpfs;
+SELECT account_id, debit, credit, memo
+FROM read_parquet('https://qayd-archive-production.r2.example/journal_lines/2019/06/journal_lines_p2019_06.parquet')
+WHERE company_id = 4821 AND account_id = 1105;
+```
+
+This is always executed by the archive service, never by directly exposing R2 credentials to a client,
+and the result set is filtered server-side by `company_id` before any row leaves the service boundary —
+the same tenant-isolation obligation that applies to a live query applies here even though Postgres RLS
+itself is not in the code path for a Parquet file.
+
+## Search API
 
 ```
-1. Client -> POST /api/v1/archive/{manifest_id}/restore-requests {reason}
-2. Laravel checks `archiving.restore` permission + company scope
-3. restore_requests row created, status = 'queued'
-4. RestoreFromArchiveJob dispatched
-     if tier == 'warm':
-         ATTACH the archive.* table back as a partition, OR
-         query archive.* directly and materialize into restore_staging.* (default — safer, no risk to live partitioning)
-     if tier == 'cold':
-         download Parquet from R2
-         COPY FROM the Parquet (via the Python/DuckDB bridge) into restore_staging.<manifest_id>_<table>
-         verify row count + checksum against archive_manifests before marking ready
-5. status -> 'ready'; restore_staging table is queryable for `restore_window_hours` (default 72h)
-6. Notification sent to requester (Reverb + `notifications` row)
-7. On expiry: DROP TABLE restore_staging.<manifest_id>_<table>; status -> 'expired'
+GET /api/v1/database/archives/search?table=invoices&query=INV-2019-00417
 ```
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "match_type": "archived_document_index",
+      "document_number": "INV-2019-00417",
+      "document_date": "2019-06-14",
+      "total_amount": "2450.000",
+      "currency_code": "KWD",
+      "status": "paid",
+      "archived_partition_id": 5502,
+      "restorable": true,
+      "estimated_restore_seconds": 8
+    }
+  ],
+  "message": "1 match.",
+  "errors": [],
+  "meta": { "pagination": { "page": 1, "per_page": 25, "total": 1, "cursor": null } },
+  "request_id": "3fe1a9d2-5c30-4e4b-8a11-1d9c9d6b7a02",
+  "timestamp": "2026-07-16T10:04:11Z"
+}
+```
+
+## AI-assisted search
+
+The Reporting Agent and Document AI (per the platform AI-responsibilities rules) may issue searches
+against `archived_document_index` and `archived_partitions` on a user's behalf — for example, resolving
+"find last year's Q2 purchase orders from this vendor" into the correct restore-eligible objects — but
+never issues a restore or a purge on its own authority. Every AI-originated search response is returned
+with `confidence`, the underlying SQL/DuckDB predicate used (for human verification), and a citation to
+the specific `archived_partitions` row(s), consistent with the platform rule that AI output must carry
+confidence, reasoning, and supporting documents; autonomy level here is **suggest-only** — the agent
+locates candidates and drafts a restore request, a human approves it (see Restoring).
+
+# Restoring
+
+## Workflow
+
+```
+requester              API                  queue                 R2                  Postgres
+  |--POST restore-requests->|                  |                     |                    |
+  |                          |--approval gate-->|                     |                    |
+  |                          |  (auto if requester has database.archive.restore.approve;    |
+  |                          |   otherwise queued for a second approver)                    |
+  |                          |--enqueue-------->|                     |                    |
+  |                          |                  |--GET object-------->|                    |
+  |                          |                  |<--stream bytes------|                    |
+  |                          |                  |--CREATE + \copy staging table------------>|
+  |                          |                  |--verify checksum + row_count-------------->|
+  |                          |                  |--filter rows by company_id (partial only)->|
+  |                          |                  |--ATTACH or hand back staging schema------->|
+  |                          |<--status=completed-|                    |                    |
+  |<--GET restore-requests/id-|                  |                     |                    |
+```
+
+## Table
 
 ```sql
 CREATE TABLE restore_requests (
-    id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    company_id          BIGINT NOT NULL REFERENCES companies(id),
-    manifest_id         BIGINT NOT NULL REFERENCES archive_manifests(id),
-    requested_by        BIGINT NOT NULL REFERENCES users(id),
-    reason              TEXT NOT NULL,
-    status              VARCHAR(16) NOT NULL DEFAULT 'queued'
-                        CHECK (status IN ('queued','restoring','ready','expired','failed')),
-    staging_location    VARCHAR(128) NULL,
-    restore_window_hours SMALLINT NOT NULL DEFAULT 72,
-    ready_at            TIMESTAMPTZ NULL,
-    expires_at          TIMESTAMPTZ NULL,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    company_id        BIGINT NOT NULL REFERENCES companies(id),
+    branch_id         BIGINT NULL REFERENCES branches(id),
+    archived_partition_id BIGINT NOT NULL REFERENCES archived_partitions(id),
+    requested_by      BIGINT NOT NULL REFERENCES users(id),
+    reason            TEXT NOT NULL,
+    restore_type      TEXT NOT NULL CHECK (restore_type IN ('full_reattach','partial_extract','federated_preview')),
+    filter_criteria   JSONB NULL,             -- e.g. {"document_number": "INV-2019-00417"} for partial_extract
+    approval_status   TEXT NOT NULL DEFAULT 'pending' CHECK (approval_status IN ('pending','approved','rejected')),
+    approved_by       BIGINT NULL REFERENCES users(id),
+    approved_at       TIMESTAMPTZ NULL,
+    status            TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','in_progress','completed','failed','expired')),
+    target_location   TEXT NULL,              -- staging schema name or attached partition name
+    row_count         BIGINT NULL,
+    started_at        TIMESTAMPTZ NULL,
+    completed_at      TIMESTAMPTZ NULL,
+    expires_at        TIMESTAMPTZ NULL,       -- staging extracts auto-purge; full reattach never expires
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_restore_requests_company ON restore_requests(company_id, status);
+
+CREATE INDEX idx_restore_requests_company ON restore_requests (company_id, status);
+CREATE INDEX idx_restore_requests_partition ON restore_requests (archived_partition_id);
 ```
 
-Attaching a warm partition back into its live parent (the rare case where a business genuinely needs to
-resume querying an old fiscal year as if it were current — e.g. a reopened audit adjustment) uses the
-inverse of detach:
+## Restore types
+
+- **`full_reattach`** — the entire partition (all tenants it contains) is rehydrated and
+  `ATTACH PARTITION`ed back onto the live table, per the SQL in Recovery. Used for a full audit
+  spanning a whole period, or a bulk correction. Requires `database.archive.restore.approve` from a
+  second approver distinct from the requester, given its platform-wide (multi-tenant) blast radius.
+- **`partial_extract`** — the object is rehydrated into an isolated staging schema
+  (`restore_staging_{request_id}`), rows are filtered to the requesting company only
+  (`WHERE company_id = :company_id AND <filter_criteria>`), and only the filtered rows are exposed to
+  the requester — the multi-tenant source object is never exposed wholesale. This is the default and
+  overwhelmingly common path (a single auditor asking for a single company's records).
+  `restore_requests.expires_at` defaults to 30 days, after which the staging schema is automatically
+  dropped by a scheduled cleanup job.
+- **`federated_preview`** — no rehydration at all; a DuckDB `read_parquet(...)` query answers the
+  request directly against R2 (see Searching). Used for quick verification before committing to a full
+  `partial_extract`.
+
+## API
+
+```
+POST /api/v1/database/restore-requests
+```
+
+```json
+{
+  "archived_partition_id": 5502,
+  "restore_type": "partial_extract",
+  "reason": "External auditor request — MOCI-2026-KW-00417, invoice INV-2019-00417 line detail",
+  "filter_criteria": { "document_number": "INV-2019-00417" }
+}
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 991,
+    "company_id": 4821,
+    "restore_type": "partial_extract",
+    "approval_status": "pending",
+    "status": "queued",
+    "estimated_completion_seconds": 45
+  },
+  "message": "Restore request created and pending approval.",
+  "errors": [],
+  "meta": { "pagination": null },
+  "request_id": "1a7c9e21-44df-4a2b-9e11-5f0a2b3c9d88",
+  "timestamp": "2026-07-16T10:10:00Z"
+}
+```
+
+```
+GET /api/v1/database/restore-requests/991
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 991,
+    "status": "completed",
+    "approval_status": "approved",
+    "approved_by": 17,
+    "target_location": "restore_staging_991",
+    "row_count": 6,
+    "started_at": "2026-07-16T10:11:02+03:00",
+    "completed_at": "2026-07-16T10:11:47+03:00",
+    "expires_at": "2026-08-15T10:11:47+03:00"
+  },
+  "message": "Restore complete. 6 matching rows available in restore_staging_991 until 2026-08-15.",
+  "errors": [],
+  "meta": { "pagination": null },
+  "request_id": "9d4e2b71-0a3c-4f5e-8b22-6a1d0c2e7f44",
+  "timestamp": "2026-07-16T10:11:47Z"
+}
+```
+
+## Approval chain and permissions
+
+| Permission | Grants | Default roles |
+|---|---|---|
+| `database.archive.search` | Search manifests and archived_document_index | Accountant, Senior Accountant, Auditor, External Auditor, Finance Manager, CFO |
+| `database.archive.restore.request` | Create a `partial_extract`/`federated_preview` restore request | Senior Accountant, Auditor, Finance Manager, CFO |
+| `database.archive.restore.approve` | Approve any restore request; required as second approver on `full_reattach` | Finance Manager, CFO, Owner |
+| `database.legal_hold.manage` | Create/release legal holds | CFO, Owner |
+| `database.archive.drop.approve` | Confirm a verified detached partition may be physically dropped | Finance Manager, CFO |
+| `database.archive.purge.approve` | Authorize final, statutory-floor-cleared disposal of a cold object | Owner only |
+
+`External Auditor` is deliberately given `database.archive.search` and `database.archive.restore.request`
+but never `.approve` of any kind — an external party can ask, never authorize.
+
+# Hot/Warm/Cold Tiering
+
+## Tier state machine
+
+```
+                 age > hot window                 age > table's pg_partman retention
+                 (operational reclass,             (physical: DETACH + export + verify + DROP,
+                  no data movement)                 gated by fiscal-period close + no legal hold)
+   ┌─────────┐  ───────────────────────►  ┌─────────┐  ─────────────────────────────────────►  ┌─────────┐
+   │   HOT    │                           │   WARM   │                                          │   COLD   │
+   │ Postgres │                           │ Postgres │                                          │ R2 object│
+   │ cache-   │  ◄───────────────────────  │ pruned,  │  ◄─────────────────────────────────────  │ + catalog│
+   │ resident │   (never restored to;       │ attached │   partial_extract / full_reattach          │  row     │
+   └─────────┘    warm is simply "not       └─────────┘   restore_requests (see Restoring)        └─────────┘
+                  hot anymore")                  │                                                     │
+                                                  │ legal_holds.status = 'active'                       │ every tenant in
+                                                  ▼ freezes any transition out of warm too              ▼ archived_partition_tenants
+                                            ┌─────────┐                                            has cleared cold_retention_years
+                                            │ FROZEN   │                                            AND no active hold
+                                            │ (hold)   │                                            ┌─────────┐
+                                            └─────────┘                                            │ PURGE-   │
+                                                                                                     │ ELIGIBLE │
+                                                                                                     └─────────┘
+```
+
+`PURGE-ELIGIBLE` is a proposal state, never an automatic action — see Compliance and Recovery for the
+human-gated final disposal procedure, which is intentionally out of the archive job's own automation
+boundary.
+
+## Automation summary
+
+| Job | Schedule | Owns |
+|---|---|---|
+| `partman-maintenance` (pg_cron, inside Postgres) | Daily 02:00 | Create upcoming partitions; detach (not drop) age-eligible ones |
+| `qayd:archive:run` | Daily 02:15 | Export, catalog, verify, drop detached partitions |
+| `qayd:archive:verify` | Nightly, offset from the above | Sample-checksum existing cold objects |
+| `qayd:archive:purge-scan` | Weekly | Propose (never execute) purge-eligible candidates for human approval |
+| Recovery drill | Quarterly | Restore-and-verify one sampled partition per major table |
+
+## Scheme-agnostic mechanics
+
+The detach/export/catalog/drop pipeline operates identically regardless of which partition key a table
+uses — pure time-range (`journal_lines`), hash-of-tenant-then-range (`ledger_entries`), or
+list-then-range (`stock_movements`), per `DATABASE_PARTITIONING.md`. Should a single tenant grow large
+enough to warrant the dedicated per-tenant hash-repartitioning path described in the platform's
+multi-tenancy scaling playbook, this pipeline requires no structural change: `DETACH PARTITION`,
+Parquet export, and `archived_partition_tenants` bookkeeping are defined at the level of "a partition,"
+not "a time range," and a hash-bucket partition detaches, exports, and restores by the identical SQL
+shown throughout this document.
+
+## Company-visible retention window
+
+A company's own in-app "history" view queries only hot+warm (the online window) by default — for
+`journal_lines`-backed views, up to 84 months, matching the platform default in `archive_tier_defaults`.
+Anything older surfaces as a "records available on request" affordance backed by
+`archived_document_index`, which triggers a `restore_requests` flow rather than a live query, keeping
+the product's default experience fast while never actually hiding or losing older data.
+
+# Examples
+
+## Example 1 — Archiving a closed fiscal year's journal_lines partition end to end
+
+Company 4821's FY2019 closed years ago; `journal_lines_p2019_06` aged past the 84-month `pg_partman`
+retention window and was detached by `partman-maintenance` last night. `qayd:archive:run` picks it up:
 
 ```sql
-ALTER TABLE archive.journal_lines_fy_2023 SET SCHEMA public;
-ALTER TABLE journal_lines ATTACH PARTITION journal_lines_fy_2023
-    FOR VALUES IN (2023);   -- fiscal-year-keyed list partition; range syntax if using date ranges
--- Secondary indexes dropped on detach must be recreated before attach for equivalent hot-tier performance:
-CREATE INDEX CONCURRENTLY idx_journal_lines_fy_2023_account ON journal_lines_fy_2023(account_id);
+-- Candidate check (abbreviated): fiscal period closed? yes. Legal hold on any touched company? no.
+SELECT company_id, count(*) AS rows FROM journal_lines_p2019_06 GROUP BY company_id;
+--  company_id | rows
+--        4821  | 118422
+--        5510  |  6091
+--        ... (339 more tenants)
+
+VACUUM (ANALYZE) journal_lines_p2019_06;
+-- export to Parquet (Zstandard) by the Python worker; row-hash checksum computed
+-- upload to qayd-archive-production/journal_lines/2019/06/journal_lines_p2019_06.parquet
+-- re-download sample, re-verify checksum: OK
+
+INSERT INTO archived_partitions
+    (source_table, partition_name, range_start, range_end, storage_location, file_format,
+     row_count, checksum_sha256, schema_snapshot, encrypted_data_key)
+VALUES
+    ('journal_lines', 'journal_lines_p2019_06', '2019-06-01', '2019-07-01',
+     'journal_lines/2019/06/journal_lines_p2019_06.parquet', 'parquet',
+     1204331, '9f2b7e1c4a...', '{"columns":[...]}', 'AQICAHg...');
+
+-- 341 rows inserted into archived_partition_tenants, one per company shown above.
+-- ledger_entries_h00_p2019_06 .. h15_p2019_06 detached and archived in the same batch.
+
+DROP TABLE journal_lines_p2019_06;
+UPDATE archived_partitions SET dropped_at = now() WHERE partition_name = 'journal_lines_p2019_06';
 ```
 
-Restore requests for **cold** data default to staging (step 4's safer branch), never a direct re-attach,
-because re-attaching years-old cold data straight into a live partitioned table without going through
-warm-tier verification first would bypass the integrity guarantees in `# Integrity & Verification Of
-Archives`. If a business case genuinely requires permanent un-archiving, that is a separate, manually
-reviewed operation (`archive:reinstate`), not an automatic outcome of a restore request.
+## Example 2 — Cold-archiving stock_movements past its shorter, purge-eligible floor
 
-# Edge Cases
+`stock_movements` carries a 7-year cold floor and `auto_purge_eligible = true` in
+`archive_tier_defaults` (lower risk than core ledger tables). A partition from 2016 has cleared both the
+pg_partman retention and the compliance floor for every tenant it touches, with no legal holds:
 
-- **Reopened fiscal year during the 90-day cooling-off window**: if an auditor reopens a `closed` fiscal
-  year (status transitions `closed → reopened → closed`) before it was archived, the archiving
-  eligibility query in `# What Gets Archived` naturally excludes it (status is no longer `closed`). If it
-  was reopened *after* already being archived to warm, the reopen operation must go through
-  Restore-From-Archive first (re-attach), make its adjustment as a new reversing entry per the
-  immutable-posted-rows rule, then re-close and re-archive on the next cycle — QAYD never edits data
-  in-place inside `archive.*`.
-- **Retention policy changed while an export is in flight**: `ExportPartitionToColdStorageJob` re-checks
-  the effective retention policy immediately before its final drop step, not only at enqueue time; if the
-  policy was raised mid-flight, the job still completes the (harmless, additive) cold copy but skips the
-  drop, leaving the data in both warm and cold until the next scheduled sweep re-evaluates it.
-- **Legal hold placed after cold export, before purge**: purge is a separate, explicitly scheduled step
-  (`archive:purge-expired`, gated by retention AND hold status) that never runs automatically as part of
-  export — a hold placed any time before that step runs blocks it, full stop.
-- **Company offboarding/closure while archives exist**: companies are never hard-deleted (per the
-  platform-wide soft-delete rule); a closed company's data continues its normal hot→warm→cold lifecycle
-  and remains subject to the same legal retention, since statutory retention is tied to when the records
-  were created, not to whether the company is currently operating.
-- **Partition boundary spanning a fiscal year that is only partially closed** (a company changes its
-  fiscal year-end mid-year): `fiscal_periods` — not calendar months — is the authoritative boundary for
-  the `journal_lines`/`ledger_entries` partition key, so a change to a company's fiscal calendar going
-  forward does not retroactively misalign already-created partitions for prior, unaffected years.
-- **Restore request for data already covered by an in-progress archiving run**: `RestoreFromArchiveJob`
-  and `archive:run` both take the same per-company advisory lock (`# Automation`); a restore request that
-  arrives mid-run waits for the lock rather than racing the export.
-- **AI layer needing multi-year historical context** (e.g. the Forecast Agent modeling a 5-year revenue
-  trend that spans cold-tier years): the AI layer cannot query `archive.*` or R2 directly — per the
-  platform rule that AI never writes to (and, by extension in QAYD, never reads production storage
-  outside) the Laravel API — so it submits the same Restore-From-Archive request as any user (subject to
-  the same permission check under the requesting user's identity) and waits for the `ready` state before
-  running its model on the restored data.
-- **A restore request's staging table outliving `restore_window_hours` due to a stuck expiry job**: the
-  expiry sweep (`archive:expire-restores`) is idempotent and runs hourly; additionally, `restore_staging`
-  schema tables carry a hard `pg_cron`-enforced backstop TTL so a failed Laravel scheduler cannot leave
-  restored sensitive financial data live indefinitely.
-- **Notification exempted from legal retention but referenced by an active audit_log entry**: an
-  `audit_logs` row that references a `notification_id` (e.g. "escalation SMS sent") retains that
-  reference even after the notification itself is purged; the audit log is the system of record for what
-  happened, and it is retained on the audit-log schedule regardless of whether the referenced entity still
-  exists — foreign keys from `audit_logs` to ephemeral entities are therefore always nullable and never
-  `ON DELETE CASCADE`.
-- **Sample-hash verification false positive from non-deterministic JSONB key ordering**: row hashes are
-  computed from `jsonb_build_object` with explicitly sorted keys (never `row_to_json` directly on a
-  column containing JSONB with insertion-order-dependent serialization) so that a byte-identical logical
-  row always produces the same hash regardless of how Postgres physically stored the JSONB.
+```sql
+SELECT ap.id, ap.partition_name, ap.range_start
+FROM archived_partitions ap
+WHERE ap.source_table = 'stock_movements_outbound'
+  AND ap.dropped_at IS NOT NULL AND ap.purged_at IS NULL
+  AND ap.range_end < now() - INTERVAL '7 years'
+  AND NOT EXISTS (
+    SELECT 1 FROM archived_partition_tenants apt
+    JOIN legal_holds lh ON lh.company_id = apt.company_id AND lh.status = 'active'
+    WHERE apt.archived_partition_id = ap.id
+  );
+--  id  | partition_name                       | range_start
+--  341 | stock_movements_outbound_p2016_03     | 2016-03-01
+```
+
+This candidate is surfaced by the weekly `qayd:archive:purge-scan` to a holder of
+`database.archive.purge.approve` as a proposal; it is never destroyed automatically.
+
+## Example 3 — External auditor restore for a bills line-item detail
+
+An external auditor engaged by company 6002 needs the line detail behind `BILL-2020-00299`. The
+requester (an internal Finance Manager acting on the auditor's behalf, since External Auditor role
+cannot self-approve) issues:
+
+```json
+POST /api/v1/database/restore-requests
+{
+  "archived_partition_id": 5890,
+  "restore_type": "partial_extract",
+  "reason": "External audit — vendor bill detail requested by [auditor firm], case ref AUD-2026-0091",
+  "filter_criteria": { "document_number": "BILL-2020-00299" }
+}
+```
+
+The job rehydrates only company 6002's matching rows into `restore_staging_1042`, expiring in 30 days;
+the auditor is handed read access scoped to that staging schema only, never to the underlying
+multi-tenant Parquet object.
+
+## Example 4 — Search resolving an archived invoice without touching R2
+
+```
+GET /api/v1/database/archives/search?table=invoices&query=INV-2018-00812
+```
+
+resolves entirely against the permanent `archived_document_index` (populated at archive time, per
+Archive Strategy's "header rows" category) — total round trip under 20ms, zero R2 requests, because
+the header summary answers "does it exist, what's the total, what status" without needing the archived
+line-item Parquet at all. Only a follow-up request for line-item detail triggers a `partial_extract`.
+
+## Example 5 — A legal hold blocking a scheduled purge
+
+Company 4821 is issued the legal hold from the Archive Policies example above
+(`MOCI-2026-KW-00417`, scoped to `journal_lines`, 2021–2023). The weekly `qayd:archive:purge-scan`
+evaluates a candidate object covering 2021-Q3 that also contains rows for companies 5510 and 7003, both
+otherwise purge-eligible:
+
+```sql
+-- The MAX() strictest-tenant rule from Compliance means this whole shared object is
+-- retained until 4821's hold is released, even though 5510 and 7003 individually cleared
+-- every floor. The scan reports it explicitly rather than silently dropping it:
+SELECT 'RETAINED: object 5501 blocked by active hold on company_id=4821 (case MOCI-2026-KW-00417)';
+```
+
+Once Legal releases the hold (`legal_holds.status = 'released'`), the object is re-evaluated on the
+next weekly scan and, assuming no other blocking condition, proceeds to the purge-approval proposal
+queue.
 
 # End of Document
