@@ -2307,8 +2307,6 @@ $ ./vendor/bin/pest tests/Unit/Seeders/IdempotencyTest.php
   Duration: 0.61s
 ```
 
-# End of Document
-
 This document is the authoritative specification for QAYD's database seeding subsystem: the
 four-layer model (Reference Data, Demo Companies, Development Seeds, Testing Seeds), the complete
 DDL for every reference table it owns (`countries`, `currencies`, `languages`, `industries`,
@@ -2321,3 +2319,5 @@ seeder in the codebase must satisfy. Any new module doc that needs a reference t
 here (a new lookup with a natural key, an industry-specific COA template, a new demo transaction
 type) extends this document rather than duplicating a parallel seeding mechanism — see
 `# Seed Philosophy` for the four-layer rules any such addition must respect.
+
+# End of Document
