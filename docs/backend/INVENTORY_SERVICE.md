@@ -431,7 +431,11 @@ update live. AI recommendations (reorder, dead-stock, rebalancing) arrive on the
 - **Warehouses.** The location hierarchy and slotting (`warehouse_bins.pick_sequence`) are owned by
   [../accounting/WAREHOUSES.md](../accounting/WAREHOUSES.md); Inventory reads it for putaway/pick/bin stock.
 - **Sales & Purchasing.** Sales reserves and issues stock (via events); Purchasing receives it. Inventory
-  never writes their tables; it reacts to their events and announces its own.
+  never writes their tables; it reacts to their events and announces its own. A Sales reservation moves
+  quantity into `quantity_reserved`; the `delivery.shipped` event then converts the reservation into a
+  `sale` movement and releases it. Purchasing's Goods Receipt (with over-receipt tolerance and optional
+  batch/expiry capture) drives `ReceiveStockAction`; replenishment rules and AI rebalancing produce
+  `draft` transfers that a Warehouse Manager must approve before dispatch.
 - **AI engine (Inventory Manager, Forecast, Fraud, Auditor agents).** Per
   [../api/INTERNAL_API.md](../api/INTERNAL_API.md), the FastAPI engine reads movement/valuation/reservation
   data through the Laravel API and returns proposals — demand forecast, reorder drafts (as
@@ -520,5 +524,12 @@ scheduled count.
   COGS.
 - **Immutability tests** assert a posted movement cannot be edited and that a correction is a reversing row.
 - **Count-lock tests** assert an outbound movement against a warehouse under physical count is rejected.
+- **Reconciliation tests** assert that rebuilding `inventory_items` from `stock_movements` reproduces the
+  live on-hand/reserved buckets exactly, and that the sum of open `inventory_valuations` layers equals the
+  Balance Sheet inventory value that Accounting reports — the three-way tie (quantity ledger, valuation
+  ledger, GL) that keeps the module trustworthy.
+- **Reservation-lifecycle tests** assert a reservation cannot exceed available stock, that
+  `active -> fulfilled` on shipment releases the reserved quantity, and that an expired reservation returns
+  stock to available without a movement row.
 
 # End of Document
