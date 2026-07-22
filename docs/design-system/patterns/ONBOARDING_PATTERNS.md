@@ -67,7 +67,7 @@ step body, a persistent-but-optional guidance rail, and a sticky action bar — 
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│  qayd    ●──●──●──○──○──○──○──○      [Save & exit]  [EN ▾]  [☾]        │ ← Progress Rail (z-sticky)
+│  qayd    ●──●──●──○──○──○──○──○      [Save & exit]  [EN ▾]  [[moon]]        │ ← Progress Rail (z-sticky)
 │          1  2  3  4  5  6  7  8                                        │
 ├─────────────────────────────────────────────┬────────────────────────┤
 │  Step 3 of 8                                 │  ● Ask AI               │
