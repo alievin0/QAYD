@@ -24,8 +24,11 @@ it('resolves the active company and returns an in-tenant membership', function (
         ])
         ->assertOk()
         ->assertJson([
-            'id' => $this->a['membership_id'],
-            'company_id' => $this->a['company_id'],
+            'success' => true,
+            'data' => [
+                'id' => $this->a['membership_id'],
+                'company_id' => $this->a['company_id'],
+            ],
         ]);
 });
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Http\Responses\ApiResponse;
 use App\Models\CompanyUser;
 use Illuminate\Http\JsonResponse;
 
@@ -12,6 +13,8 @@ use Illuminate\Http\JsonResponse;
  * membership by id inside the active company. Because {@see CompanyUser} is scoped by RLS +
  * CompanyScope, a membership belonging to another company resolves to `findOrFail` → 404 — the
  * enumeration-safe "cross-tenant id read returns 404, not 403" behaviour SPRINT_01 §S1-06 requires.
+ *
+ * Responds through the S1-16 standard envelope: the resource lives under `data`.
  */
 final class MembershipController extends Controller
 {
@@ -19,7 +22,7 @@ final class MembershipController extends Controller
     {
         $membership = CompanyUser::query()->findOrFail($id);
 
-        return response()->json([
+        return ApiResponse::success([
             'id' => $membership->id,
             'company_id' => $membership->company_id,
             'user_id' => $membership->user_id,

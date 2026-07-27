@@ -1,9 +1,14 @@
 <?php
 
+use App\Exceptions\ApiExceptionRenderer;
+use App\Http\Middleware\ApiEnvelope;
+use App\Http\Middleware\AssignRequestId;
 use App\Http\Middleware\ResolveTenantCompany;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -18,7 +23,23 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'tenant' => ResolveTenantCompany::class,
         ]);
+
+        // S1-16 cross-cutting foundations, front of the `api` group so they wrap every /api response:
+        // AssignRequestId mints/propagates the correlation id first; ApiEnvelope guarantees the
+        // standard envelope on the way out.
+        $middleware->prependToGroup('api', [
+            AssignRequestId::class,
+            ApiEnvelope::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        // S1-16 global exception handler: every /api (or JSON) request renders as a coded error
+        // envelope, never a stack trace. Non-API/HTML requests keep Laravel's default rendering.
+        $exceptions->render(function (Throwable $e, Request $request): ?JsonResponse {
+            if (! $request->is('api/*') && ! $request->expectsJson()) {
+                return null;
+            }
+
+            return ApiExceptionRenderer::render($e);
+        });
     })->create();
