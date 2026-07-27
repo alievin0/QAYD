@@ -104,7 +104,11 @@ return new class extends Migration
 
     private function appPassword(): string
     {
-        return (string) env('DB_APP_PASSWORD', 'qayd_app_password');
+        // Single source of truth: the `pgsql_app` connection config (which reads DB_APP_PASSWORD).
+        // Reading it here — instead of a duplicate env() default with a hardcoded literal — guarantees
+        // the role's password always matches what the application connects with, and keeps no
+        // credential literal in this migration.
+        return (string) config('database.connections.pgsql_app.password');
     }
 
     /** Double-quote a validated SQL identifier. */

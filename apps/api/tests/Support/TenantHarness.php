@@ -55,7 +55,8 @@ final class TenantHarness
         $app = $base;
         $app['database'] = $database;
         $app['username'] = env('DB_APP_USERNAME', 'qayd_app');
-        $app['password'] = env('DB_APP_PASSWORD', 'qayd_app_password');
+        // Same source as the migration + the pgsql_app connection (reads DB_APP_PASSWORD); no literal.
+        $app['password'] = config('database.connections.pgsql_app.password');
 
         config([
             'database.connections.'.self::OWNER => $owner,

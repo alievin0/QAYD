@@ -33,7 +33,7 @@ it('returns identity, memberships, active company and perms_ver via the session 
         ->assertJsonPath('data.active_company.uuid', $membership['company_uuid'])
         ->assertJsonPath('data.active_company.role', 'owner')
         ->assertJsonPath('data.perms_ver', 1)
-        ->assertJsonPath('data.permissions', []); // TODO(S1-09): resolved permissions
+        ->assertJsonPath('data.permissions', []); // no-permission role → empty set (S1-09 resolution covered below)
 });
 
 it('returns the same identity payload via a bearer JWT', function (): void {

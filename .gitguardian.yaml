@@ -1,0 +1,18 @@
+# GitGuardian (ggshield) configuration — NARROWLY SCOPED. This is NOT a global secret suppression.
+#
+# The only thing ignored is secret detection inside the single CI workflow file
+# `.github/workflows/ci.yml`. That file hardcodes the Postgres service-container password and the
+# `qayd_app` role password (POSTGRES_PASSWORD / DB_APP_PASSWORD) used by the ephemeral, per-run
+# GitHub Actions Postgres container. Those credentials:
+#   - are throwaway: the container is created and destroyed on every CI run,
+#   - never exist in, and never grant access to, any real/staging/production environment,
+#   - must be literal values in the workflow so the service container and the migrate/seed steps agree.
+# A value-based ignore is not used because one of them (`qayd`) is also the DB name/username and would
+# over-match legitimate detections elsewhere; scoping to this one CI file is the narrowest safe option.
+#
+# Everything else in the repo is still fully scanned. Real dev/example credentials are NOT ignored —
+# they use `CHANGE_ME` placeholders (see apps/api/.env.example, infrastructure/docker/docker-compose.yml).
+version: 2
+secret:
+  ignored-paths:
+    - ".github/workflows/ci.yml"

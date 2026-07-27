@@ -11,7 +11,10 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-qayd}
       POSTGRES_USER: ${POSTGRES_USER:-qayd}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-qayd_dev_password}
+      # Local-dev only. CHANGE_ME is a non-secret placeholder default so `make up` works zero-config;
+      # override POSTGRES_PASSWORD (shell env or a gitignored infrastructure/docker/.env) for anything
+      # beyond a throwaway local database. Keep apps/api/.env DB_PASSWORD equal to this value.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGE_ME}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:

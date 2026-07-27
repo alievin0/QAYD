@@ -113,7 +113,9 @@ return [
             'port' => env('DB_PORT', '5432'),
             'database' => env('DB_DATABASE', 'laravel'),
             'username' => env('DB_APP_USERNAME', 'qayd_app'),
-            'password' => env('DB_APP_PASSWORD', 'qayd_app_password'),
+            // Placeholder fallback only — the real value comes from DB_APP_PASSWORD (see .env.example).
+            // The S1-05 role migration reads this same config value, so role and connection always match.
+            'password' => env('DB_APP_PASSWORD', 'CHANGE_ME'),
             'charset' => env('DB_CHARSET', 'utf8'),
             'prefix' => '',
             'prefix_indexes' => true,

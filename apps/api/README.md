@@ -5,9 +5,20 @@ This is **THE backend** for QAYD. It is a Laravel 12 (PHP 8.4) application that 
 in Supabase, not in Edge Functions, not in the frontend.** Other apps in the monorepo call this
 service; they do not re-implement its rules.
 
-Sprint 1 (story **S1-01**) scope is intentionally a **skeleton**: the app boots, exposes a
-health route, connects to Postgres, and passes clean quality gates. No business schema, auth,
-RBAC, or domain models yet — those arrive in later stories.
+Sprint 1 delivered the **identity & tenancy foundation** (the accounting/domain layer arrives in
+later sprints):
+
+- **Identity/tenant schema** — users, companies, memberships, and the RBAC catalogue on PostgreSQL.
+- **Postgres Row-Level-Security multi-tenancy** — tenant traffic is served as a dedicated
+  non-superuser, `NOBYPASSRLS` role (`qayd_app`, the `pgsql_app` connection) so RLS is actually
+  enforced; migrations still run as the schema owner.
+- **Authentication** — register, email verification, login, RS256 **JWT** for bearer clients and
+  a Sanctum **cookie** session for the web SPA, plus refresh-token rotation-on-use with family-wide
+  **reuse detection** (`/auth/register`, `/auth/email/verify`, `/auth/login`, `/auth/refresh`,
+  `/auth/logout`, `/auth/me`, `/auth/switch-company`).
+- **Authorization** — a `PermissionResolver` + `permission:` route gate (deny-by-default RBAC).
+- **Onboarding** — create-company (gated on a verified email).
+- **Cross-cutting** — the standard JSON response **envelope** and an append-only **audit log**.
 
 ## Stack
 
@@ -19,11 +30,16 @@ RBAC, or domain models yet — those arrive in later stories.
 ## Setup
 
 ```bash
-cp .env.example .env      # then fill DB_PASSWORD for local dev
+cp .env.example .env      # then set DB_PASSWORD (owner) for local dev; DB_APP_PASSWORD may stay CHANGE_ME
 composer install
 php artisan key:generate
-php artisan migrate
+php artisan migrate        # creates the qayd_app role + RLS policies
+php artisan db:seed        # seeds the RBAC catalogue (permissions + default roles) — REQUIRED for authz
 ```
+
+> `DB_PASSWORD` must match the `POSTGRES_PASSWORD` your Postgres container uses (compose default:
+> `CHANGE_ME`). The `qayd_app` role is created/kept at whatever `DB_APP_PASSWORD` you set, and the app
+> connects with the same value, so they always match.
 
 ## Run
 

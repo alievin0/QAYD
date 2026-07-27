@@ -73,6 +73,9 @@ jobs:
       DB_HOST: 127.0.0.1
       DB_PORT: 5432
       DB_USERNAME: qayd
+      # Throwaway, ephemeral CI-container passwords (recreated every run; never touch a real env). They
+      # must be literal here so the service container and the migrate/seed steps agree. Their literal
+      # detection is narrowly scoped out in /.gitguardian.yaml — NOT a global secret suppression.
       DB_PASSWORD: qayd
       # Runtime tenant-scoped role created by migration 000008 (defaults; work out of the box).
       DB_APP_USERNAME: qayd_app
