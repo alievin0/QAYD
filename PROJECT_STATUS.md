@@ -8,12 +8,12 @@ reading dozens of documents.
 
 | Field | Value |
 |---|---|
-| **Status** | **Sprint 2 (Accounting core) IN PROGRESS** — **S2-01 (Chart of Accounts) COMPLETE + hardened & CLOSED** (tag `s2-01-complete`); **S2-02 (COA API + tree read) ready next**. Base `v0.1.0`. |
+| **Status** | **Sprint 2 (Accounting core) IN PROGRESS** — **S2-01 (Chart of Accounts) + S2-02 (COA API) COMPLETE & CLOSED** (tags `s2-01-complete`, `s2-02-complete`); **S2-03 (Journal schema + immutability) ready next**. Base `v0.1.0`. |
 | **Documentation** | Frozen (`architecture-freeze-v1`); one build decision since: [ADR-0010](docs/architecture/adr/0010-auth-service-authoritative-for-identity-schema.md) |
-| **Phase** | Build — Sprint 2 (Accounting core): S2-01 done — `account_types` + `accounts` schema, RLS, Create/Update/Reclassify/Deactivate actions, global-catalogue lockdown |
-| **Current Sprint** | **Sprint 2 (Accounting core)** — S2-01 complete (**1 of 14 stories**); next: S2-02 (COA API + tree read) |
+| **Phase** | Build — Sprint 2 (Accounting core): S2-01 (`accounts` schema, RLS, actions, catalogue lockdown) + S2-02 (COA API: controllers/routes/permission gate/SDK) done |
+| **Current Sprint** | **Sprint 2 (Accounting core)** — S2-01 + S2-02 complete (**2 of 14 stories**); next: S2-03 (Journal schema + immutability triggers) |
 | **Current Version** | v0.1.0 |
-| **Next Milestone** | S2-02 — Chart-of-Accounts API + tree read (controllers/routes + `accounting.coa.manage`/`accounting.journal.read` enforcement + bilingual tree) |
+| **Next Milestone** | S2-03 — `journal_entries` + `journal_lines` schema + immutability triggers (`trg_journal_lines_no_update_when_posted`, `trg_no_ai_autopost`, `chk_journal_entries_balanced`) |
 | **Architecture Owner** | Ali S — Founder |
 | **Governing Stack** | [docs/architecture/FINAL_TECH_STACK.md](docs/architecture/FINAL_TECH_STACK.md) (Option A · Locked) |
 | **Last Updated** | 2026-07-28 |
