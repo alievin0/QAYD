@@ -139,7 +139,9 @@ jobs:
           cache: pnpm
 
       - name: Install (frozen lockfile)
-        run: pnpm install --frozen-lockfile
+        # Approve the native build scripts of well-known deps (esbuild/sharp/unrs-resolver)
+        # on a clean runner; pnpm 11 otherwise fails install with ERR_PNPM_IGNORED_BUILDS.
+        run: pnpm install --frozen-lockfile --config.dangerouslyAllowAllBuilds=true
 
       - name: Build packages/*
         run: pnpm -r --filter "./packages/*" run build
