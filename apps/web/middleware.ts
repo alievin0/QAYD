@@ -17,6 +17,8 @@ import { SESSION_COOKIE } from "./lib/auth/session-cookie";
 /** Public auth routes that must render without a session (the anonymous front doors). */
 const PUBLIC_PREFIXES = [
   "/login",
+  "/register",
+  "/verify-email",
   "/mfa",
   "/forgot-password",
   "/reset-password",

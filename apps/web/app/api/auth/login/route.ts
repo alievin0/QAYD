@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import type { FetchLike } from "@qayd/sdk";
 import { loginInputSchema } from "@qayd/types";
 
 import {
@@ -17,8 +18,10 @@ import { createServerClient } from "../../../../lib/server/sdk";
  * never sees a token), and returns only the browser-safe projection (identity, memberships, whether a
  * company must be selected). The token fields are stripped from the response body by construction.
  *
- * TODO(S1-15): pair this with the real `/login` screen — CSRF priming, the MFA branch, and the
- * `resolvePostAuthDestination` redirect. The cookie/proxy seam itself is complete.
+ * On a `429` (account lockout or IP throttle) the upstream `Retry-After` header is captured off the raw
+ * response — the SDK's typed error drops it — and re-emitted on the BFF response so the client can render
+ * the server's countdown rather than guess one (LOGIN_FLOW.md: "a lockout countdown is the server's
+ * Retry-After header, not a client-side guess").
  */
 export async function POST(request: Request): Promise<NextResponse> {
   const parsed = loginInputSchema.safeParse(await readJsonBody(request));
@@ -33,8 +36,17 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  // Wrap fetch so a `429`'s Retry-After survives the SDK boundary (its QaydApiError carries no headers).
+  let retryAfter: string | null = null;
+  const captureRetryAfter: FetchLike = async (input, init) => {
+    const response = await fetch(input, init);
+    const header = response.headers.get("Retry-After");
+    if (header) retryAfter = header;
+    return response;
+  };
+
   try {
-    const client = createServerClient();
+    const client = createServerClient({ fetch: captureRetryAfter });
     const { data } = await client.login(parsed.data);
     if (data === null) {
       return errorResponse(new Error("Empty login response."));
@@ -67,6 +79,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       },
     });
   } catch (error) {
-    return errorResponse(error);
+    const response = errorResponse(error);
+    if (response.status === 429 && retryAfter) {
+      response.headers.set("Retry-After", retryAfter);
+    }
+    return response;
   }
 }

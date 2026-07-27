@@ -14,12 +14,16 @@
 /** The default in-app destination when there is no valid `next`. */
 export const DEFAULT_POST_AUTH_PATH = "/dashboard";
 
-/** Public auth routes a `next` must never point at (that would loop or skip the gate). */
+/** Auth-flow routes a `next` must never point at (that would loop, skip the gate, or re-enter onboarding). */
 const AUTH_PATH_PREFIXES = [
   "/login",
+  "/register",
+  "/verify-email",
   "/mfa",
   "/forgot-password",
   "/reset-password",
+  "/select-company",
+  "/onboarding",
 ] as const;
 
 /** A stable, arbitrary base used only to parse root-relative paths; never emitted. */

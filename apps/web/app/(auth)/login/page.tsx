@@ -1,12 +1,16 @@
-import { LoginPlaceholder } from "./login-placeholder";
+import { redirect } from "next/navigation";
+
+import { hasSessionCookie } from "../../../lib/server/session";
+import { LoginForm } from "./login-form";
 
 /**
- * `/login` — a placeholder so the middleware redirect resolves to a real route this sprint. The real
- * sign-in journey (CSRF priming, `POST /auth/login`, MFA branch, `next` deep-link resolution, lockout
- * handling) is the next story.
- *
- * TODO(S1-15): replace this stub with the real LoginForm wired to the auth API per LOGIN_FLOW.md.
+ * `/login` — the sign-in front door (S1-15). An anonymous-only guard runs server-side first: an
+ * already-signed-in visitor (session cookie present) is redirected forward rather than shown a sign-in
+ * form, so a stale bookmark never flashes a login panel at a live session (LOGIN_FLOW.md → Step 0).
  */
-export default function LoginPage() {
-  return <LoginPlaceholder />;
+export default async function LoginPage() {
+  if (await hasSessionCookie()) {
+    redirect("/dashboard");
+  }
+  return <LoginForm />;
 }
