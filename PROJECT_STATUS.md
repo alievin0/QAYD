@@ -8,15 +8,15 @@ reading dozens of documents.
 
 | Field | Value |
 |---|---|
-| **Status** | **Sprint 1 (Foundations) COMPLETE** — squash-merged to `main` and released as **`v0.1.0`** (merge `720c491`); **Sprint 2 (Accounting core) ready to begin** |
+| **Status** | **Sprint 2 (Accounting core) IN PROGRESS** — **S2-01 (Chart of Accounts) COMPLETE + hardened & CLOSED** (tag `s2-01-complete`); **S2-02 (COA API + tree read) ready next**. Base `v0.1.0`. |
 | **Documentation** | Frozen (`architecture-freeze-v1`); one build decision since: [ADR-0010](docs/architecture/adr/0010-auth-service-authoritative-for-identity-schema.md) |
-| **Phase** | Build — Sprint 1 complete (monorepo + CI, PostgreSQL RLS multi-tenancy, auth/RBAC, create-company, app shell + EN/AR RTL) |
-| **Current Sprint** | **Sprint 2 (Accounting core)** — ready to begin, on the `v0.1.0` base |
+| **Phase** | Build — Sprint 2 (Accounting core): S2-01 done — `account_types` + `accounts` schema, RLS, Create/Update/Reclassify/Deactivate actions, global-catalogue lockdown |
+| **Current Sprint** | **Sprint 2 (Accounting core)** — S2-01 complete (**1 of 14 stories**); next: S2-02 (COA API + tree read) |
 | **Current Version** | v0.1.0 |
-| **Next Milestone** | Sprint 2 — Accounting core: Chart of Accounts, journal entries, posting engine, General Ledger, Trial Balance |
+| **Next Milestone** | S2-02 — Chart-of-Accounts API + tree read (controllers/routes + `accounting.coa.manage`/`accounting.journal.read` enforcement + bilingual tree) |
 | **Architecture Owner** | Ali S — Founder |
 | **Governing Stack** | [docs/architecture/FINAL_TECH_STACK.md](docs/architecture/FINAL_TECH_STACK.md) (Option A · Locked) |
-| **Last Updated** | 2026-07-27 |
+| **Last Updated** | 2026-07-28 |
 
 ---
 
