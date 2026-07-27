@@ -53,9 +53,11 @@ Route::prefix('v1/auth')->group(function () use ($stateful): void {
 Route::post('/v1/companies', CreateCompanyController::class)
     ->middleware([...$stateful, 'auth:web,jwt', 'verified.email']);
 
-// Tenant-scoped example route (S1-05): the `tenant` middleware resolves + verifies the active company
-// and pins the RLS session context.
-Route::middleware('tenant')->group(function (): void {
+// Tenant-scoped example route (S1-05): authenticated via EITHER the Sanctum session cookie (`web`) OR a
+// bearer JWT (`jwt`) FIRST — so `$request->user()` is populated for a real HTTP client — then the
+// `tenant` middleware resolves + verifies the active company and pins the RLS session context. Without
+// the auth guard the tenant middleware sees a null user and 401s every real request.
+Route::middleware([...$stateful, 'auth:web,jwt', 'tenant'])->group(function (): void {
     Route::get('/v1/memberships/{id}', [MembershipController::class, 'show'])->whereNumber('id');
 });
 

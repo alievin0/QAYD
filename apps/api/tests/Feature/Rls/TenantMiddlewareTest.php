@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Models\User;
+use App\Services\Identity\TokenService;
 use Tests\Support\TenantHarness;
 
 uses()->group('rls', 'isolation');
@@ -74,4 +75,38 @@ it('rejects an unauthenticated request', function (): void {
     $this->getJson('/api/v1/memberships/'.$this->a['membership_id'], [
         'X-Company-Id' => $this->a['company_uuid'],
     ])->assertStatus(401);
+});
+
+// The route is guarded by `auth:web,jwt` before `tenant`, so a real HTTP client authenticating with a
+// bearer JWT (not the test-only actingAs guard shim) is resolved to a user and reaches the tenant
+// boundary — exactly how a production client hits it.
+it('returns 200 for a member authenticating with a real bearer JWT', function (): void {
+    $token = app(TokenService::class)->issueAccessToken($this->userA)['token'];
+
+    $this->withToken($token)
+        ->getJson('/api/v1/memberships/'.$this->a['membership_id'], [
+            'X-Company-Id' => $this->a['company_uuid'],
+        ])
+        ->assertOk()
+        ->assertJson([
+            'success' => true,
+            'data' => [
+                'id' => $this->a['membership_id'],
+                'company_id' => $this->a['company_id'],
+            ],
+        ]);
+});
+
+it('returns 404 (not 403) for a cross-tenant id read via a real bearer JWT', function (): void {
+    // User A is a member of A; the bearer request asks, within company A, for company B's row by id.
+    // RLS + CompanyScope scope the query to A, so B's row is "not found" — 404, never 403.
+    $token = app(TokenService::class)->issueAccessToken($this->userA)['token'];
+
+    $response = $this->withToken($token)
+        ->getJson('/api/v1/memberships/'.$this->b['membership_id'], [
+            'X-Company-Id' => $this->a['company_uuid'],
+        ]);
+
+    $response->assertNotFound();
+    expect($response->getStatusCode())->toBe(404);
 });

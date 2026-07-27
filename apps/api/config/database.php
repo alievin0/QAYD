@@ -167,7 +167,10 @@ return [
 
     'redis' => [
 
-        'client' => env('REDIS_CLIENT', 'phpredis'),
+        // Default to the pure-PHP `predis` client so Redis (and the Redis-backed perms cache) works
+        // out of the box on any host, including those without the phpredis C extension. A host that
+        // has phpredis installed can opt into it with REDIS_CLIENT=phpredis for its throughput.
+        'client' => env('REDIS_CLIENT', 'predis'),
 
         'options' => [
             'cluster' => env('REDIS_CLUSTER', 'redis'),
