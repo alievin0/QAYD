@@ -1,0 +1,19 @@
+/*
+ * QAYD UI base stylesheet. Import once in the app's global stylesheet — after the `@tailwind base`
+ * layer — to pull in the brass/warm-ink design tokens (`@qayd/config/tokens.css`) that every
+ * component utility resolves against.
+ *
+ *   import "@qayd/ui/styles.css";
+ *
+ * `color-scheme` is set per theme so native controls (scrollbars, form widgets, autofill) match the
+ * active light/dark theme the `.dark` class drives.
+ */
+@import "@qayd/config/tokens.css";
+
+:root {
+  color-scheme: light;
+}
+
+.dark {
+  color-scheme: dark;
+}

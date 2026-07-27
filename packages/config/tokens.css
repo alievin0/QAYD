@@ -1,0 +1,142 @@
+/*
+ * QAYD design tokens — the single CSS source of truth for the brass/warm-ink system.
+ * Authored from docs/design-system/foundations/{COLORS,TYPOGRAPHY_SCALE,SPACING_SCALE,RADIUS_SCALE,SHADOW_SCALE}.md.
+ * Consumed as `@qayd/config/tokens.css`; the Tailwind preset (`@qayd/config/tailwind-preset`) maps
+ * utilities onto these variables. Dark mode is a hand-authored theme under `.dark`, never a luminance inversion.
+ *
+ * Two layers live here:
+ *   1. Raw `--qayd-*` scale — literal hex, the exhaustive palette (COLORS.md "Token definitions").
+ *   2. shadcn semantic aliases — unitless HSL triplets consumed as `hsl(var(--x) / <alpha-value>)`,
+ *      so Tailwind opacity modifiers (bg-primary/10, ring-ring/50) work. shadcn's `--accent` stays a
+ *      NEUTRAL hover tint, never the brand brass (COLORS.md "The shadcn --accent trap").
+ */
+
+:root {
+  /* — Ink scale (warm-neutral graphite, 12 steps) — */
+  --qayd-ink-1: #fafaf9;
+  --qayd-ink-2: #f4f3f1;
+  --qayd-ink-3: #ebe9e6;
+  --qayd-ink-4: #e0deda;
+  --qayd-ink-5: #d3d0ca;
+  --qayd-ink-6: #c2beb6;
+  --qayd-ink-7: #a9a49a;
+  --qayd-ink-8: #878174;
+  --qayd-ink-9: #645f53;
+  --qayd-ink-10: #4a4639;
+  --qayd-ink-11: #2b2820;
+  --qayd-ink-12: #15130e;
+
+  /* — Accent (one brass, four states) — */
+  --qayd-accent-subtle: #eadfbf;
+  --qayd-accent: #9c7a34;
+  --qayd-accent-strong: #7a5d22;
+  --qayd-accent-on: var(--qayd-ink-12);
+
+  /* — Semantic financial hues (three, each with a wash) — */
+  --qayd-positive: #17794a;
+  --qayd-positive-subtle: #e3f3ea;
+  --qayd-negative: #b4232e;
+  --qayd-negative-subtle: #fbe7e8;
+  --qayd-warning: #b45309;
+  --qayd-warning-subtle: #fbebda;
+
+  /* — shadcn semantic aliases (HSL triplets) — */
+  --background: 60 9% 98%; /* ink-1 */
+  --foreground: 43 20% 7%; /* ink-12 */
+  --card: 40 12% 95%; /* ink-2 */
+  --card-foreground: 43 20% 7%; /* ink-12 */
+  --popover: 60 9% 98%; /* ink-1 */
+  --popover-foreground: 43 20% 7%; /* ink-12 */
+  --primary: 40 50% 41%; /* accent (brass) */
+  --primary-foreground: 43 20% 7%; /* accent-on (near-black, never white) */
+  --secondary: 36 11% 91%; /* ink-3 */
+  --secondary-foreground: 44 15% 15%; /* ink-11 */
+  --muted: 40 12% 95%; /* ink-2 */
+  --muted-foreground: 42 9% 36%; /* ink-9 (secondary text) */
+  --accent: 40 9% 87%; /* NEUTRAL hover tint (ink-4) — NOT the brand brass */
+  --accent-foreground: 44 15% 15%; /* ink-11 */
+  --destructive: 355 67% 42%; /* negative */
+  --destructive-foreground: 60 9% 98%; /* ink-1 */
+  --border: 40 9% 74%; /* ink-6 */
+  --input: 40 8% 63%; /* ink-7 (stronger input border) */
+  --ring: 40 50% 41%; /* accent focus ring */
+
+  /* — Radius (10px rectangular ceiling; 4/6/8/10) — */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --radius-full: 9999px;
+  --radius: 8px; /* shadcn default = radius-lg */
+
+  /* — Elevation (warm-ink shadows, border does most of the separating) — */
+  --shadow-xs: 0 1px 2px rgba(21, 19, 14, 0.04);
+  --shadow-sm: 0 2px 4px rgba(21, 19, 14, 0.06);
+  --shadow-md: 0 8px 16px -4px rgba(21, 19, 14, 0.08);
+  --shadow-lg: 0 24px 48px -12px rgba(21, 19, 14, 0.16);
+
+  /* — Spacing semantic aliases (4px base) — */
+  --space-2xs: 4px;
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+  --space-3xl: 64px;
+}
+
+.dark {
+  /* — Ink scale — dark is authored, not derived; elevated surfaces LIGHTEN — */
+  --qayd-ink-1: #14130f;
+  --qayd-ink-2: #1b1914;
+  --qayd-ink-3: #24211a;
+  --qayd-ink-4: #2d2921;
+  --qayd-ink-5: #383327;
+  --qayd-ink-6: #46402f;
+  --qayd-ink-7: #58503a;
+  --qayd-ink-8: #786f55;
+  --qayd-ink-9: #a39878;
+  --qayd-ink-10: #c2b99c;
+  --qayd-ink-11: #e4dec9;
+  --qayd-ink-12: #f8f6ef;
+
+  --qayd-accent-subtle: #3a2e14;
+  --qayd-accent: #d9b96c;
+  --qayd-accent-strong: #e8ce8e;
+  --qayd-accent-on: #14130f;
+
+  --qayd-positive: #4ade94;
+  --qayd-positive-subtle: #12301f;
+  --qayd-negative: #f26b74;
+  --qayd-negative-subtle: #3a1618;
+  --qayd-warning: #f5a855;
+  --qayd-warning-subtle: #3a2812;
+
+  /* — shadcn semantic aliases (dark) — */
+  --background: 48 14% 7%; /* ink-1 */
+  --foreground: 47 39% 95%; /* ink-12 */
+  --card: 42 16% 12%; /* ink-3 (raised, lighter than canvas) */
+  --card-foreground: 47 39% 95%; /* ink-12 */
+  --popover: 42 16% 12%; /* ink-3 */
+  --popover-foreground: 47 39% 95%; /* ink-12 */
+  --primary: 42 59% 64%; /* accent (brass) */
+  --primary-foreground: 48 14% 7%; /* accent-on */
+  --secondary: 42 16% 12%; /* ink-3 */
+  --secondary-foreground: 47 33% 84%; /* ink-11 */
+  --muted: 43 15% 9%; /* ink-2 */
+  --muted-foreground: 45 19% 55%; /* ink-9 */
+  --accent: 40 15% 15%; /* NEUTRAL hover tint (ink-4) */
+  --accent-foreground: 47 33% 84%; /* ink-11 */
+  --destructive: 356 84% 68%; /* negative */
+  --destructive-foreground: 48 14% 7%; /* ink-1 */
+  --border: 44 20% 23%; /* ink-6 */
+  --input: 44 21% 29%; /* ink-7 */
+  --ring: 42 59% 64%; /* accent */
+
+  /* Shadows are re-cast on the same warm-ink hue in dark; layering also survives on the ink-6 border. */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.36);
+  --shadow-md: 0 8px 16px -4px rgba(0, 0, 0, 0.44);
+  --shadow-lg: 0 24px 48px -12px rgba(0, 0, 0, 0.56);
+}

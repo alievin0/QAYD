@@ -1,0 +1,49 @@
+{
+  "name": "@qayd/config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared TypeScript, ESLint, Prettier, and Tailwind (QAYD brass tokens) configuration for the TypeScript workspaces.",
+  "license": "UNLICENSED",
+  "exports": {
+    "./eslint": "./eslint-preset.js",
+    "./prettier": "./prettier.config.js",
+    "./tailwind-preset": {
+      "types": "./src/tailwind-preset.ts",
+      "import": "./dist/tailwind-preset.js",
+      "default": "./dist/tailwind-preset.js"
+    },
+    "./tokens.css": "./tokens.css",
+    "./tsconfig/base.json": "./tsconfig/base.json"
+  },
+  "files": [
+    "dist",
+    "src",
+    "tokens.css",
+    "eslint-preset.js",
+    "prettier.config.js",
+    "tsconfig"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "typescript-eslint": "^8.65.0"
+  },
+  "peerDependencies": {
+    "eslint": "^9",
+    "prettier": "^3",
+    "tailwindcss": "^3.4",
+    "typescript": "^5"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.5",
+    "prettier": "^3.9.6",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5.9.3"
+  }
+}

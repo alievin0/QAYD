@@ -1,0 +1,30 @@
+{
+  "name": "@qayd/sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Typed fetch-based client for the QAYD Laravel /api/v1 (auth + company). Framework-free; returns the typed envelope, throws a typed ApiError.",
+  "license": "UNLICENSED",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@qayd/shared": "workspace:*",
+    "@qayd/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@qayd/config": "workspace:*",
+    "eslint": "^9.39.5",
+    "typescript": "^5.9.3"
+  }
+}
