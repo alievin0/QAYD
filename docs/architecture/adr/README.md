@@ -60,6 +60,7 @@ corrected by a new linked record, not an edit.
 | [0007](./0007-ai-orchestrator.md) | A dedicated AI Orchestrator in the FastAPI engine with a human-in-the-loop safety contract | Accepted |
 | [0008](./0008-typescript-shared-packages.md) | Shared TypeScript types (web + SDK); the cross-service contract is Laravel's `/api/v1` (OpenAPI) | Accepted |
 | [0009](./0009-tailwind-shadcn-design-system.md) | Tailwind + shadcn/ui bound to the QAYD brass design tokens | Accepted |
+| [0010](./0010-auth-service-authoritative-for-identity-schema.md) | AUTH_SERVICE.md is authoritative over MULTI_TENANCY.md for the identity/RBAC schema | Accepted |
 
 ## How to Add a New ADR
 

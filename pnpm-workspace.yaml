@@ -1,0 +1,13 @@
+# pnpm workspace — covers the TypeScript surfaces only.
+# apps/api (Laravel/PHP) uses Composer; apps/ai (FastAPI/Python) uses uv/pip.
+# See ADR-0001 (polyglot monorepo, per-app tooling) and FINAL_TECH_STACK.md.
+packages:
+  - "apps/web"
+  - "packages/*"
+
+# Approve native build scripts so `pnpm install --frozen-lockfile` is deterministic
+# on a clean CI runner (pnpm 10.4+ reads this from pnpm-workspace.yaml, not package.json).
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+  - unrs-resolver
