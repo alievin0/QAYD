@@ -1,0 +1,222 @@
+# QAYD — CI gate matrix (Sprint-1 story S1-02).
+#
+# A fan-out of three parallel per-codebase jobs (backend / frontend / ai), each running its full
+# BLOCKING gate set, then a light aggregate `summary` job that branch protection can require as a
+# single status check. The gates mirror docs/testing/TESTING_STRATEGY.md ("Required gates") and are
+# the exact commands that pass locally today (see infrastructure/github/README.md for the mapping).
+#
+# NOTE ON LOCATION: docs/architecture/FINAL_TECH_STACK.md names `infrastructure/github` as the CI
+# home, but GitHub Actions only executes workflows physically under `.github/workflows/`. This file
+# is therefore the canonical, runnable CI; infrastructure/github/ documents the reconciliation.
+name: CI
+
+on:
+  pull_request:
+    branches: [main, sprint-01-foundations]
+  push:
+    branches: [main, sprint-01-foundations]
+  workflow_dispatch:
+
+# One in-flight run per ref; a new push cancels the superseded run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Backend — Laravel 12 / PHP 8.4 (Composer). Real Postgres 16 + Redis 7
+  # service containers: the migrate/seed steps and the pest RLS/isolation group
+  # authenticate against Postgres as the non-superuser `qayd_app` role that the
+  # S1-05 migration creates, so Row-Level Security is actually enforced.
+  # ---------------------------------------------------------------------------
+  backend:
+    name: backend (laravel · php 8.4)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: qayd
+          POSTGRES_USER: qayd
+          POSTGRES_PASSWORD: qayd
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U qayd -d qayd"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Reach the service containers. `.env` is copied from `.env.example`, which already carries the
+      # correct DB_CONNECTION=pgsql / DB_DATABASE=qayd / DB_USERNAME=qayd but an EMPTY DB_PASSWORD.
+      # We deliberately set ONLY the keys that phpunit.xml does NOT pin — never DB_CONNECTION or
+      # DB_DATABASE — so the pest default suite still runs on the phpunit-forced sqlite `:memory:`
+      # connection (phpunit's `<env>` beats `.env`, but an OS env var would beat phpunit's non-forced
+      # entry). Laravel's immutable dotenv lets these real env vars win over `.env`, supplying the
+      # password that both the migrate/seed steps (owner `qayd`) and the pest RLS group connect with.
+      # The RLS harness self-heals the pgsql database name from `:memory:` back to `qayd`.
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_USERNAME: qayd
+      DB_PASSWORD: qayd
+      # Runtime tenant-scoped role created by migration 000008 (defaults; work out of the box).
+      DB_APP_USERNAME: qayd_app
+      DB_APP_PASSWORD: qayd_app_password
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP 8.4
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: pdo_pgsql, pgsql, redis, bcmath, intl, mbstring
+          coverage: pcov
+          tools: composer:v2
+
+      - name: Composer install
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Prepare .env + app key
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      - name: Migrate (Postgres — creates qayd_app role + RLS policies)
+        run: php artisan migrate --force
+
+      - name: Seed (RBAC catalogue + default roles)
+        run: php artisan db:seed --force
+
+      - name: Pint — format gate
+        run: ./vendor/bin/pint --test
+
+      - name: PHPStan — static analysis (level max)
+        run: ./vendor/bin/phpstan analyse --memory-limit=1G
+
+      - name: Pest — unit + feature + arch + rls/isolation
+        run: ./vendor/bin/pest
+
+      # Coverage floor is NON-FATAL for now (suites are still small — S1-02). Reads as advisory
+      # until the coverage targets in docs/testing/TESTING_STRATEGY.md are met.
+      - name: Coverage floor (advisory — non-blocking)
+        continue-on-error: true
+        run: ./vendor/bin/pest --coverage --min=85
+
+  # ---------------------------------------------------------------------------
+  # Frontend — Next.js 15 / React 19 (pnpm) + the TypeScript packages/*.
+  # Packages are built first so `web`'s workspace imports resolve.
+  # ---------------------------------------------------------------------------
+  frontend:
+    name: frontend (next.js · node 22)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages/*
+        run: pnpm -r --filter "./packages/*" run build
+
+      - name: Lint
+        run: pnpm --filter web run lint
+
+      - name: Typecheck (tsc --noEmit)
+        run: pnpm --filter web run typecheck
+
+      - name: Unit + integration (vitest)
+        run: pnpm --filter web run test
+
+      - name: i18n parity (en/ar)
+        run: pnpm --filter web run i18n:check
+
+      - name: Build (next build)
+        run: pnpm --filter web run build
+
+  # ---------------------------------------------------------------------------
+  # AI engine — FastAPI / Python 3.12 (uv). Health-route only this sprint;
+  # carries its lint/type/test gates so quality is enforced from the first PR.
+  # ---------------------------------------------------------------------------
+  ai:
+    name: ai engine (fastapi · python 3.12)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/ai
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv (pins Python 3.12)
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.12'
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Ruff — lint
+        run: uv run ruff check .
+
+      - name: mypy — typecheck (strict)
+        run: uv run mypy src
+
+      - name: pytest — unit + contract
+        run: uv run pytest
+
+  # ---------------------------------------------------------------------------
+  # Light cross-cutting / summary job. Aggregates the fan-out into ONE required
+  # status check for branch protection, and fails if any gate matrix failed.
+  # (OpenAPI-drift + shared AI-proposal contract stages land with their specs;
+  # see docs/testing/TESTING_STRATEGY.md "Pipeline stages".)
+  # ---------------------------------------------------------------------------
+  summary:
+    name: ci summary (aggregate gate)
+    needs: [backend, frontend, ai]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify every gate job passed
+        run: |
+          echo "backend=${{ needs.backend.result }}"
+          echo "frontend=${{ needs.frontend.result }}"
+          echo "ai=${{ needs.ai.result }}"
+          if [ "${{ needs.backend.result }}" != "success" ] \
+            || [ "${{ needs.frontend.result }}" != "success" ] \
+            || [ "${{ needs.ai.result }}" != "success" ]; then
+            echo "::error::One or more codebase gate matrices failed." >&2
+            exit 1
+          fi
+          {
+            echo "## CI gate matrix — all green";
+            echo "| Codebase | Result |";
+            echo "| --- | --- |";
+            echo "| backend (laravel) | ${{ needs.backend.result }} |";
+            echo "| frontend (next.js) | ${{ needs.frontend.result }} |";
+            echo "| ai (fastapi) | ${{ needs.ai.result }} |";
+          } >> "$GITHUB_STEP_SUMMARY"
