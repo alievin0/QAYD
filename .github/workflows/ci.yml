@@ -12,9 +12,12 @@ name: CI
 
 on:
   pull_request:
-    branches: [main, sprint-01-foundations]
+    # Filtered by the PR's BASE branch: any PR targeting main or a sprint working branch.
+    branches: [main, 'sprint-**']
   push:
-    branches: [main, sprint-01-foundations]
+    # Gate every push to main and to any sprint working branch (sprint-02-accounting-core, …)
+    # via a glob, so no workflow edit is needed when the next sprint branch is cut.
+    branches: [main, 'sprint-**']
   workflow_dispatch:
 
 # One in-flight run per ref; a new push cancels the superseded run.
