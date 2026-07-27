@@ -8,10 +8,10 @@ reading dozens of documents.
 
 | Field | Value |
 |---|---|
-| **Status** | **Sprint 1 (Foundations) delivered** — DoD verified, CI green on `sprint-01-foundations`; pending review + merge to `main` |
+| **Status** | **Sprint 1 (Foundations) COMPLETE** — squash-merged to `main` and released as **`v0.1.0`** (merge `720c491`); **Sprint 2 (Accounting core) ready to begin** |
 | **Documentation** | Frozen (`architecture-freeze-v1`); one build decision since: [ADR-0010](docs/architecture/adr/0010-auth-service-authoritative-for-identity-schema.md) |
 | **Phase** | Build — Sprint 1 complete (monorepo + CI, PostgreSQL RLS multi-tenancy, auth/RBAC, create-company, app shell + EN/AR RTL) |
-| **Current Sprint** | Sprint 1 done → **Sprint 2 (Accounting core)** next |
+| **Current Sprint** | **Sprint 2 (Accounting core)** — ready to begin, on the `v0.1.0` base |
 | **Current Version** | v0.1.0 |
 | **Next Milestone** | Sprint 2 — Accounting core: Chart of Accounts, journal entries, posting engine, General Ledger, Trial Balance |
 | **Architecture Owner** | Ali S — Founder |
