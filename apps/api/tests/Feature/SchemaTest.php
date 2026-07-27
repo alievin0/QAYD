@@ -128,6 +128,31 @@ it('enforces a unique users.email (citext)', function (): void {
     expect(uniqueConstraintColumnSets('users'))->toContain(['email']);
 });
 
+it('enforces a unique index on users.uuid (ADR-0010 / TD-02)', function (): void {
+    // `uuid` uniqueness is a CREATE UNIQUE INDEX (uq_users_uuid), not a table constraint, so it is
+    // absent from information_schema.table_constraints — assert it via the pg index catalog. The
+    // query returns a row only when a single-column UNIQUE index named uq_users_uuid covers
+    // users.uuid, so a missing / non-unique / multi-column index yields null and fails the assert.
+    $index = DB::connection(PG)->selectOne(
+        <<<'SQL'
+            SELECT i.relname AS index_name
+            FROM pg_index ix
+            JOIN pg_class i     ON i.oid = ix.indexrelid
+            JOIN pg_class t     ON t.oid = ix.indrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+            JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (ix.indkey)
+            WHERE n.nspname = 'public'
+              AND t.relname = 'users'
+              AND a.attname = 'uuid'
+              AND ix.indnatts = 1
+              AND ix.indisunique
+              AND i.relname = 'uq_users_uuid'
+            SQL,
+    );
+    assert($index instanceof stdClass);
+    expect($index->index_name)->toBe('uq_users_uuid');
+});
+
 it('enforces a unique company_users (company_id, user_id) and carries company_id', function (): void {
     // Tenant-owned pivot: company_id must be present and NOT NULL.
     $companyId = DB::connection(PG)->selectOne(
