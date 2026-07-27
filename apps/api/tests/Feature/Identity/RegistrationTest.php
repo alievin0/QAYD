@@ -102,8 +102,13 @@ it('blocks an email-unverified user from creating a company (403 EMAIL_NOT_VERIF
 it('lets a verified user past the company-create guard', function (): void {
     $user = User::factory()->create(); // verified by default
 
+    // The email-verification guard now fronts the REAL create-company endpoint (S1-10). A verified user
+    // is no longer blocked by the guard, so an empty body falls through to input validation (422
+    // VALIDATION_ERROR) — never the 403 EMAIL_NOT_VERIFIED an unverified caller gets. That the response
+    // is a validation error, not the verification error, is exactly what "past the guard" means here.
     $this->actingAs($user, 'web')
         ->postJson('/api/v1/companies', [])
-        ->assertStatus(202)
-        ->assertJsonPath('success', true);
+        ->assertStatus(422)
+        ->assertJsonPath('success', false)
+        ->assertJsonPath('errors.0.code', 'VALIDATION_ERROR');
 });
