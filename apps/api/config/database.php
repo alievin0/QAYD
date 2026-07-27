@@ -99,6 +99,28 @@ return [
             'sslmode' => env('DB_SSLMODE', 'prefer'),
         ],
 
+        /*
+         * Runtime / tenant-scoped connection. Same Postgres database as `pgsql`, but authenticated
+         * as the NON-superuser, NOBYPASSRLS application role `qayd_app` so Row-Level Security is
+         * actually enforced (a superuser or BYPASSRLS role silently bypasses RLS even with FORCE).
+         * `pgsql` (the owner) runs migrations and privileged auth lookups; every tenant-owned model
+         * runs on this connection via the BelongsToCompany trait. See ROW_LEVEL_SECURITY.md "# Roles".
+         */
+        'pgsql_app' => [
+            'driver' => 'pgsql',
+            'url' => env('DB_APP_URL'),
+            'host' => env('DB_HOST', '127.0.0.1'),
+            'port' => env('DB_PORT', '5432'),
+            'database' => env('DB_DATABASE', 'laravel'),
+            'username' => env('DB_APP_USERNAME', 'qayd_app'),
+            'password' => env('DB_APP_PASSWORD', 'qayd_app_password'),
+            'charset' => env('DB_CHARSET', 'utf8'),
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'search_path' => 'public',
+            'sslmode' => env('DB_SSLMODE', 'prefer'),
+        ],
+
         'sqlsrv' => [
             'driver' => 'sqlsrv',
             'url' => env('DB_URL'),
