@@ -4,6 +4,7 @@ use App\Exceptions\ApiExceptionRenderer;
 use App\Http\Middleware\ApiEnvelope;
 use App\Http\Middleware\AssignRequestId;
 use App\Http\Middleware\EnsureEmailVerified;
+use App\Http\Middleware\EnsurePermission;
 use App\Http\Middleware\ResolveTenantCompany;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -25,6 +26,10 @@ return Application::configure(basePath: dirname(__DIR__))
             'tenant' => ResolveTenantCompany::class,
             // S1-07 email-verification gate (e.g. company creation): 403 EMAIL_NOT_VERIFIED.
             'verified.email' => EnsureEmailVerified::class,
+            // S1-09 route authorization: `permission:<key>` authorizes against the resolved permission
+            // set for the active company (deny-by-default → 403 INSUFFICIENT_PERMISSION). Applied AFTER
+            // the `tenant` middleware, which pins the active company.
+            'permission' => EnsurePermission::class,
         ]);
 
         // S1-16 cross-cutting foundations, front of the `api` group so they wrap every /api response:

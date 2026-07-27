@@ -6,6 +6,7 @@ use App\Http\Controllers\Identity\LogoutController;
 use App\Http\Controllers\Identity\MeController;
 use App\Http\Controllers\Identity\RefreshController;
 use App\Http\Controllers\Identity\RegisterController;
+use App\Http\Controllers\Identity\SwitchCompanyController;
 use App\Http\Controllers\Identity\VerifyEmailController;
 use App\Http\Controllers\MembershipController;
 use App\Http\Responses\ApiResponse;
@@ -37,10 +38,13 @@ Route::prefix('v1/auth')->group(function () use ($stateful): void {
     Route::post('login', LoginController::class)->middleware($stateful);
     Route::post('refresh', RefreshController::class);
 
-    // Authenticated via EITHER the Sanctum session cookie (`web`) OR a bearer JWT (`jwt`).
+    // Authenticated via EITHER the Sanctum session cookie (`web`) OR a bearer JWT (`jwt`). `me` and
+    // `switch-company` deliberately need NO active company (no X-Company-Id): switch-company is how the
+    // active company is chosen, and me reports the currently-active one (S1-09).
     Route::middleware([...$stateful, 'auth:web,jwt'])->group(function (): void {
         Route::get('me', MeController::class);
         Route::post('logout', LogoutController::class);
+        Route::post('switch-company', SwitchCompanyController::class);
     });
 });
 
@@ -54,3 +58,11 @@ Route::post('/v1/companies', CreateCompanyController::class)
 Route::middleware('tenant')->group(function (): void {
     Route::get('/v1/memberships/{id}', [MembershipController::class, 'show'])->whereNumber('id');
 });
+
+// S1-09 route-authorization demonstration (local/testing only — never exposed in production). A
+// tenant-scoped route guarded by `permission:reports.read`: the resolved permission set for the active
+// company must include the key, else the gate returns 403 INSUFFICIENT_PERMISSION (deny-by-default).
+if (app()->environment(['local', 'testing'])) {
+    Route::middleware([...$stateful, 'auth:web,jwt', 'tenant', 'permission:reports.read'])
+        ->get('/v1/_probe/guarded', fn () => ApiResponse::success(['ok' => true], 'probe.guarded'));
+}

@@ -69,9 +69,17 @@ final class LoginController extends Controller
     private function payload(Credential $credential): array
     {
         $user = $credential->user;
-        $companies = $this->memberships->forUser($user->id);
+        $memberships = $this->memberships->forUser($user->id);
 
-        $activeCompanyId = count($companies) === 1 ? $companies[0]['company_uuid'] : null;
+        // Project to a client-safe shape: never serialise the internal, sequential company_id.
+        $companies = array_map(fn (array $m): array => [
+            'uuid' => $m['company_uuid'],
+            'name_en' => $m['name_en'],
+            'name_ar' => $m['name_ar'],
+            'role' => $m['role'],
+        ], $memberships);
+
+        $activeCompanyId = count($companies) === 1 ? $companies[0]['uuid'] : null;
 
         return [
             'status' => 'authenticated',

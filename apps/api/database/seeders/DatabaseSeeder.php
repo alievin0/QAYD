@@ -15,11 +15,13 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // User::factory(10)->create();
+        // The fixed RBAC catalogue: permissions + system default roles (S1-09). Idempotent.
+        $this->call(RbacSeeder::class);
 
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
-        ]);
+        // A demo identity. firstOrCreate keeps `db:seed` safe to re-run (citext email is unique).
+        User::query()->firstOrCreate(
+            ['email' => 'test@example.com'],
+            ['name' => 'Test User'],
+        );
     }
 }

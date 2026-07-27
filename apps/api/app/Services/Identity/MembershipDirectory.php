@@ -20,9 +20,11 @@ use Illuminate\Support\Facades\DB;
 final class MembershipDirectory
 {
     /**
-     * The active, non-revoked memberships for a user, joined to company + role for display.
+     * The active, non-revoked memberships for a user, joined to company + role for display. The
+     * internal `company_id` is included so callers can match the resolved active company; controllers
+     * project only the public `company_uuid` to clients (a sequential id is never serialised).
      *
-     * @return list<array{company_uuid: string, name_en: string, name_ar: string|null, role: string, perms_ver: int}>
+     * @return list<array{company_id: int, company_uuid: string, name_en: string, name_ar: string|null, role: string, perms_ver: int}>
      */
     public function forUser(int $userId): array
     {
@@ -34,11 +36,12 @@ final class MembershipDirectory
             ->whereNull('cu.deleted_at')
             ->whereNull('c.deleted_at')
             ->orderBy('c.name_en')
-            ->get(['c.uuid as company_uuid', 'c.name_en', 'c.name_ar', 'r.key as role', 'cu.perms_ver']);
+            ->get(['cu.company_id', 'c.uuid as company_uuid', 'c.name_en', 'c.name_ar', 'r.key as role', 'cu.perms_ver']);
 
         $memberships = [];
         foreach ($rows as $row) {
             $memberships[] = [
+                'company_id' => is_numeric($row->company_id) ? (int) $row->company_id : 0,
                 'company_uuid' => $this->asString($row->company_uuid),
                 'name_en' => $this->asString($row->name_en),
                 'name_ar' => $row->name_ar !== null ? $this->asString($row->name_ar) : null,

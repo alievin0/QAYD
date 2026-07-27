@@ -99,6 +99,30 @@ final class TokenService
     }
 
     /**
+     * The active company id a bearer access token is scoped to (its `cid` claim), or null when the
+     * token carries none (a company-unscoped token) or fails to decode. Used by `/auth/me` to reflect a
+     * `switch-company` that re-minted a company-scoped token, so a stateless bearer client's active
+     * company survives without server-side session state. Fail-closed: any decode/type failure ⇒ null.
+     */
+    public function companyIdFromAccessToken(string $jwt): ?int
+    {
+        try {
+            JWT::$leeway = $this->leeway();
+            $decoded = JWT::decode($jwt, new Key($this->keys->publicKey(), $this->algorithm()));
+        } catch (Throwable) {
+            return null;
+        }
+
+        if (($decoded->typ ?? null) !== 'access') {
+            return null;
+        }
+
+        $cid = $decoded->cid ?? null;
+
+        return is_numeric($cid) ? (int) $cid : null;
+    }
+
+    /**
      * Issue an opaque refresh token (prefixed `rft_`), storing only its SHA-256. A new `familyId`
      * starts a fresh rotation chain; passing an existing one continues the chain on rotation.
      *
