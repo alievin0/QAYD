@@ -8,6 +8,8 @@ use App\Data\Accounting\CreateAccountData;
 use App\Exceptions\Accounting\AccountRuleException;
 use App\Models\Account;
 use App\Models\AccountType;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Create one account in the active company's chart (S2-01, docs/accounting/CHART_OF_ACCOUNTS.md). Runs
@@ -17,10 +19,14 @@ use App\Models\AccountType;
  *
  * Business rules (each a 422 {@see AccountRuleException}): the account type must exist; a parent, when
  * given, must be an account in the same company (a cross-tenant id is invisible under RLS, so it reads
- * as "not found"); the code must be unique within the company.
+ * as "not found"); the code must be unique within the company — enforced race-free by the
+ * `uq_accounts_company_code` constraint and converted to a domain error (never a raw DB exception).
  */
 final class CreateAccountAction
 {
+    /** PostgreSQL SQLSTATE for a unique-constraint violation. */
+    private const UNIQUE_VIOLATION = '23505';
+
     public function execute(CreateAccountData $data): Account
     {
         $type = AccountType::query()->find($data->accountTypeId);
@@ -30,10 +36,6 @@ final class CreateAccountAction
 
         if ($data->parentId !== null && ! Account::query()->whereKey($data->parentId)->exists()) {
             throw AccountRuleException::invalidParent();
-        }
-
-        if (Account::query()->where('code', $data->code)->exists()) {
-            throw AccountRuleException::duplicateCode($data->code);
         }
 
         $account = new Account;
@@ -48,8 +50,30 @@ final class CreateAccountAction
             'is_control_account' => $data->isControlAccount,
             'control_account_of' => $data->controlAccountOf,
         ]);
-        $account->save();
+
+        $this->persist($account, $data->code);
 
         return $account->refresh();
+    }
+
+    /**
+     * Save inside a SAVEPOINT so a duplicate-code collision (the `uq_accounts_company_code` constraint —
+     * the single, race-free source of truth for code uniqueness) rolls back only this insert, leaves the
+     * surrounding request transaction intact, and surfaces as the standard domain exception. Any other
+     * database error is re-thrown for the global handler to render as a safe, non-leaking 500.
+     */
+    private function persist(Account $account, string $code): void
+    {
+        try {
+            DB::connection($account->getConnectionName())->transaction(static function () use ($account): void {
+                $account->save();
+            });
+        } catch (QueryException $e) {
+            if ((string) $e->getCode() === self::UNIQUE_VIOLATION) {
+                throw AccountRuleException::duplicateCode($code);
+            }
+
+            throw $e;
+        }
     }
 }

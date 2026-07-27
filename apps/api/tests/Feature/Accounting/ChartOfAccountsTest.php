@@ -151,6 +151,30 @@ it('refuses a duplicate account code within a company (422 DUPLICATE_ACCOUNT_COD
     });
 });
 
+it('keeps the tenant transaction alive after a caught duplicate (savepoint) and never leaks a raw DB error', function (): void {
+    $co = TenantHarness::seedCompany('Savepoint Co');
+
+    TenantHarness::runInTenant($co['company_id'], function (): void {
+        $create = app(CreateAccountAction::class);
+        $create->execute(new CreateAccountData(accountTypeId: coaTypeId('asset'), code: '7000', nameEn: 'First', nameAr: 'أول'));
+
+        // A second insert of the same code is caught at the uq_accounts_company_code constraint inside
+        // the action's savepoint and converted to the domain exception — never a raw QueryException.
+        try {
+            $create->execute(new CreateAccountData(accountTypeId: coaTypeId('asset'), code: '7000', nameEn: 'Second', nameAr: 'ثاني'));
+            $threw = false;
+        } catch (AccountRuleException $e) {
+            $threw = true;
+            expect($e->errorCode())->toBe('DUPLICATE_ACCOUNT_CODE');
+        }
+        expect($threw)->toBeTrue();
+
+        // The surrounding transaction survived the caught violation: a different code still commits.
+        $survivor = $create->execute(new CreateAccountData(accountTypeId: coaTypeId('asset'), code: '7001', nameEn: 'Third', nameAr: 'ثالث'));
+        expect($survivor->code)->toBe('7001');
+    });
+});
+
 it('refuses an unknown account type (422 ACCOUNT_TYPE_NOT_FOUND)', function (): void {
     $co = TenantHarness::seedCompany('Type Co');
 
