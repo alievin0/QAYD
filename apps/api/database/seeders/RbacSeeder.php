@@ -35,7 +35,7 @@ final class RbacSeeder extends Seeder
      * @var array<string, list<string>>
      */
     private const CATALOGUE = [
-        'accounting' => ['read', 'create', 'update', 'delete', 'export', 'approve'],
+        'accounting' => ['read', 'create', 'update', 'delete', 'export', 'approve', 'coa.manage', 'journal.read'],
         'bank' => ['read', 'create', 'update', 'delete', 'reconcile', 'transfer'],
         'payroll' => ['read', 'calculate', 'approve', 'release', 'export'],
         'inventory' => ['read', 'create', 'adjust', 'transfer', 'delete'],
@@ -77,17 +77,17 @@ final class RbacSeeder extends Seeder
             'reports.*', 'documents.*', 'ai.*', 'purchasing.approve', 'sales.approve',
         ]],
         'finance_manager' => ['Finance Manager', 'مدير المالية', [
-            'reads', 'accounting.create', 'accounting.update', 'accounting.export', 'accounting.approve',
+            'reads', 'accounting.coa.manage', 'accounting.create', 'accounting.update', 'accounting.export', 'accounting.approve',
             'bank.reconcile', 'bank.create', 'bank.update', 'tax.calculate', 'tax.export',
             'reports.export', 'reports.share', 'documents.upload', 'ai.chat', 'ai.analyze',
         ]],
         'senior_accountant' => ['Senior Accountant', 'محاسب أول', [
-            'accounting.read', 'accounting.create', 'accounting.update', 'accounting.export',
+            'accounting.read', 'accounting.journal.read', 'accounting.coa.manage', 'accounting.create', 'accounting.update', 'accounting.export',
             'bank.read', 'bank.reconcile', 'reports.read', 'reports.export', 'tax.read', 'tax.calculate',
             'documents.read', 'documents.upload', 'ai.chat', 'ai.analyze',
         ]],
         'accountant' => ['Accountant', 'محاسب', [
-            'accounting.read', 'accounting.create', 'accounting.update', 'bank.read',
+            'accounting.read', 'accounting.journal.read', 'accounting.create', 'accounting.update', 'bank.read',
             'reports.read', 'documents.read', 'documents.upload', 'ai.chat',
         ]],
         'auditor' => ['Auditor', 'مدقق', ['reads', 'reports.export']],
@@ -121,7 +121,7 @@ final class RbacSeeder extends Seeder
         ]],
         'read_only' => ['Read Only', 'قراءة فقط', ['reads']],
         'external_auditor' => ['External Auditor', 'مدقق خارجي', [
-            'accounting.read', 'bank.read', 'reports.read', 'reports.export', 'tax.read', 'documents.read',
+            'accounting.read', 'accounting.journal.read', 'bank.read', 'reports.read', 'reports.export', 'tax.read', 'documents.read',
         ]],
     ];
 

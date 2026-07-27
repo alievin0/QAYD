@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Accounting\AccountController;
 use App\Http\Controllers\Identity\CreateCompanyController;
 use App\Http\Controllers\Identity\LoginController;
 use App\Http\Controllers\Identity\LogoutController;
@@ -60,6 +61,26 @@ Route::post('/v1/companies', CreateCompanyController::class)
 Route::middleware([...$stateful, 'auth:web,jwt', 'tenant'])->group(function (): void {
     Route::get('/v1/memberships/{id}', [MembershipController::class, 'show'])->whereNumber('id');
 });
+
+// S2-02 — Chart of Accounts API. Tenant-scoped: auth → tenant (pins the active company + RLS) → the
+// `permission:` gate. Reads require accounting.journal.read; writes accounting.coa.manage. Route-model
+// binding of {account} is RLS-scoped, so a cross-tenant id resolves to 404 (never another tenant's row).
+Route::prefix('v1/accounting')
+    ->middleware([...$stateful, 'auth:web,jwt', 'tenant'])
+    ->group(function (): void {
+        Route::middleware('permission:accounting.journal.read')->group(function (): void {
+            Route::get('accounts', [AccountController::class, 'index']);
+            Route::get('accounts/tree', [AccountController::class, 'tree']);
+            Route::get('accounts/{account}', [AccountController::class, 'show'])->whereNumber('account');
+        });
+
+        Route::middleware('permission:accounting.coa.manage')->group(function (): void {
+            Route::post('accounts', [AccountController::class, 'store']);
+            Route::patch('accounts/{account}', [AccountController::class, 'update'])->whereNumber('account');
+            Route::post('accounts/{account}/reclassify', [AccountController::class, 'reclassify'])->whereNumber('account');
+            Route::post('accounts/{account}/deactivate', [AccountController::class, 'deactivate'])->whereNumber('account');
+        });
+    });
 
 // S1-09 route-authorization demonstration (local/testing only — never exposed in production). A
 // tenant-scoped route guarded by `permission:reports.read`: the resolved permission set for the active

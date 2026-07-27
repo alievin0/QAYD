@@ -1,18 +1,24 @@
 import { resolveApiBaseUrl } from "@qayd/shared";
 import type {
+  AccountListResult,
+  AccountResult,
+  AccountTreeResult,
   AuthMe,
+  CreateAccountInput,
   CreateCompanyInput,
   CreateCompanyResult,
   Envelope,
   LoginInput,
   LoginResult,
   LogoutInput,
+  ReclassifyAccountInput,
   RefreshInput,
   RefreshResult,
   RegisterInput,
   RegisterResult,
   SwitchCompanyInput,
   SwitchCompanyResult,
+  UpdateAccountInput,
   VerifyEmailInput,
   VerifyEmailResult,
 } from "@qayd/types";
@@ -40,7 +46,7 @@ export interface QaydClientOptions {
 }
 
 interface RequestConfig {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PATCH";
   path: string;
   body?: unknown;
   query?: Record<string, string | number | undefined>;
@@ -219,6 +225,57 @@ export class QaydClient {
   /** `POST /companies` — an email-verified user with zero companies creates one and becomes its Owner. */
   createCompany(input: CreateCompanyInput): Promise<Envelope<CreateCompanyResult>> {
     return this.request<CreateCompanyResult>({ method: "POST", path: "/companies", body: input });
+  }
+
+  // — Accounting: chart of accounts (`/api/v1/accounting/accounts`) —
+
+  /** `GET /accounting/accounts` — the flat chart, ordered by code (needs accounting.journal.read). */
+  listAccounts(companyId?: string): Promise<Envelope<AccountListResult>> {
+    return this.request<AccountListResult>({ method: "GET", path: "/accounting/accounts", companyId });
+  }
+
+  /** `GET /accounting/accounts/tree` — the chart nested under parents (needs accounting.journal.read). */
+  accountTree(companyId?: string): Promise<Envelope<AccountTreeResult>> {
+    return this.request<AccountTreeResult>({ method: "GET", path: "/accounting/accounts/tree", companyId });
+  }
+
+  /** `GET /accounting/accounts/{id}` — one account; a cross-tenant id resolves to 404. */
+  getAccount(id: number, companyId?: string): Promise<Envelope<AccountResult>> {
+    return this.request<AccountResult>({ method: "GET", path: `/accounting/accounts/${id}`, companyId });
+  }
+
+  /** `POST /accounting/accounts` — create an account (needs accounting.coa.manage). */
+  createAccount(input: CreateAccountInput, companyId?: string): Promise<Envelope<AccountResult>> {
+    return this.request<AccountResult>({ method: "POST", path: "/accounting/accounts", body: input, companyId });
+  }
+
+  /** `PATCH /accounting/accounts/{id}` — rename or renumber an account (needs accounting.coa.manage). */
+  updateAccount(id: number, input: UpdateAccountInput, companyId?: string): Promise<Envelope<AccountResult>> {
+    return this.request<AccountResult>({
+      method: "PATCH",
+      path: `/accounting/accounts/${id}`,
+      body: input,
+      companyId,
+    });
+  }
+
+  /** `POST /accounting/accounts/{id}/reclassify` — change an account's type (needs accounting.coa.manage). */
+  reclassifyAccount(id: number, input: ReclassifyAccountInput, companyId?: string): Promise<Envelope<AccountResult>> {
+    return this.request<AccountResult>({
+      method: "POST",
+      path: `/accounting/accounts/${id}/reclassify`,
+      body: input,
+      companyId,
+    });
+  }
+
+  /** `POST /accounting/accounts/{id}/deactivate` — deactivate an account (needs accounting.coa.manage). */
+  deactivateAccount(id: number, companyId?: string): Promise<Envelope<AccountResult>> {
+    return this.request<AccountResult>({
+      method: "POST",
+      path: `/accounting/accounts/${id}/deactivate`,
+      companyId,
+    });
   }
 }
 

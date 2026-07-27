@@ -58,3 +58,20 @@ export {
   type SwitchCompanyInput,
   type SwitchCompanyResult,
 } from "./company.js";
+
+export {
+  accountSchema,
+  accountTypeSchema,
+  createAccountInputSchema,
+  reclassifyAccountInputSchema,
+  updateAccountInputSchema,
+  type Account,
+  type AccountListResult,
+  type AccountResult,
+  type AccountTreeNode,
+  type AccountTreeResult,
+  type AccountType,
+  type CreateAccountInput,
+  type ReclassifyAccountInput,
+  type UpdateAccountInput,
+} from "./accounting.js";
