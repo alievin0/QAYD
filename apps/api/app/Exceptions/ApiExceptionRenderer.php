@@ -29,12 +29,7 @@ final class ApiExceptionRenderer
     public static function render(Throwable $e): JsonResponse
     {
         return match (true) {
-            $e instanceof DomainException => ApiResponse::error(
-                $e->errorCode(),
-                $e->getMessage(),
-                $e->errorsList(),
-                $e->errorStatus(),
-            ),
+            $e instanceof DomainException => self::domain($e),
             $e instanceof ValidationException => self::validation($e),
             $e instanceof AuthenticationException => ApiResponse::error(
                 'AUTHENTICATION_FAILED',
@@ -62,6 +57,21 @@ final class ApiExceptionRenderer
                 500,
             ),
         };
+    }
+
+    /**
+     * A typed domain exception → its coded envelope, plus any headers the exception carries
+     * (e.g. `Retry-After` on a `429` lockout — docs/backend/AUTH_SERVICE.md "# Error Handling").
+     */
+    private static function domain(DomainException $e): JsonResponse
+    {
+        $response = ApiResponse::error($e->errorCode(), $e->getMessage(), $e->errorsList(), $e->errorStatus());
+
+        foreach ($e->headers() as $name => $value) {
+            $response->headers->set($name, $value);
+        }
+
+        return $response;
     }
 
     /**

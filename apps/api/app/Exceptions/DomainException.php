@@ -37,6 +37,17 @@ abstract class DomainException extends RuntimeException
     abstract public function errorStatus(): int;
 
     /**
+     * Extra HTTP response headers this failure must carry alongside the envelope (e.g. `Retry-After`
+     * on a throttle lockout). The global handler applies them to the rendered response. Default: none.
+     *
+     * @return array<string, string>
+     */
+    public function headers(): array
+    {
+        return [];
+    }
+
+    /**
      * The `errors[]` list for the envelope — one entry, keyed by the catalog code.
      *
      * @return list<array{code: string, field: string|null, message: string, meta: array<string, mixed>}>

@@ -19,9 +19,15 @@ use Illuminate\Support\Facades\Auth;
  * `company_id` is auto-filled from the resolved tenant context by the BelongsToCompany trait unless a
  * value is passed explicitly (e.g. a login that already knows the target company).
  *
- * This is the skeleton write path only — it is deliberately NOT yet wired into auth/onboarding (those
- * are later stories) and does not implement the async outbox/queue, hash chain, or PII masking layers
- * the full audit service adds.
+ * The optional `$connection` override writes the row on a specific connection rather than the default
+ * RLS-enforced `pgsql_app` one. This is required for **platform-level** auth events that have no tenant
+ * context — a login has no active company, so its `company_id` is NULL, which the audit_logs RLS
+ * INSERT policy rejects on the non-superuser tenant connection; such rows are written on the privileged
+ * (owner) auth connection, the same path all pre-tenant auth work uses (AUTH_SERVICE.md
+ * "# Multi-Tenancy Enforcement").
+ *
+ * This is the skeleton write path only — it does not implement the async outbox/queue, hash chain, or
+ * PII masking layers the full audit service adds.
  */
 final class AuditLogger
 {
@@ -42,6 +48,7 @@ final class AuditLogger
         ?int $actorUserId = null,
         ?string $actorService = null,
         ?int $actingAsUserId = null,
+        ?string $connection = null,
     ): AuditLog {
         $request = request();
 
@@ -68,6 +75,14 @@ final class AuditLogger
 
         if ($branchId !== null) {
             $attributes['branch_id'] = $branchId;
+        }
+
+        if ($connection !== null) {
+            $log = new AuditLog($attributes);
+            $log->setConnection($connection);
+            $log->save();
+
+            return $log;
         }
 
         return AuditLog::create($attributes);

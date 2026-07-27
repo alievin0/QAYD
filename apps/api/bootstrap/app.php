@@ -3,6 +3,7 @@
 use App\Exceptions\ApiExceptionRenderer;
 use App\Http\Middleware\ApiEnvelope;
 use App\Http\Middleware\AssignRequestId;
+use App\Http\Middleware\EnsureEmailVerified;
 use App\Http\Middleware\ResolveTenantCompany;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -22,6 +23,8 @@ return Application::configure(basePath: dirname(__DIR__))
         // the health check stay reachable. Once auth (S1-08) lands it is appended to the tenant API.
         $middleware->alias([
             'tenant' => ResolveTenantCompany::class,
+            // S1-07 email-verification gate (e.g. company creation): 403 EMAIL_NOT_VERIFIED.
+            'verified.email' => EnsureEmailVerified::class,
         ]);
 
         // S1-16 cross-cutting foundations, front of the `api` group so they wrap every /api response:

@@ -38,9 +38,18 @@ return [
     */
 
     'guards' => [
+        // The Sanctum stateful SPA session (docs/backend/AUTH_SERVICE.md "# Integrations — Sanctum").
+        // The web app authenticates from the first-party httpOnly session cookie this guard reads.
         'web' => [
             'driver' => 'session',
             'provider' => 'users',
+        ],
+
+        // Bearer clients (mobile, partner, AI engine): an RS256 JWT verified by TokenService. Registered
+        // as a request guard in AppServiceProvider::boot() (Auth::viaRequest('jwt', ...)). Protected auth
+        // routes accept EITHER credential via `auth:web,jwt`.
+        'jwt' => [
+            'driver' => 'jwt',
         ],
     ],
 
