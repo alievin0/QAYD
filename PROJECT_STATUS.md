@@ -8,15 +8,15 @@ reading dozens of documents.
 
 | Field | Value |
 |---|---|
-| **Status** | Architecture Complete |
-| **Documentation** | Frozen (`architecture-freeze-v1`) |
-| **Phase** | Phase 0 — Blueprint Freeze done · entering Build |
-| **Current Sprint** | Sprint 1 |
+| **Status** | **Sprint 1 (Foundations) delivered** — DoD verified, CI green on `sprint-01-foundations`; pending review + merge to `main` |
+| **Documentation** | Frozen (`architecture-freeze-v1`); one build decision since: [ADR-0010](docs/architecture/adr/0010-auth-service-authoritative-for-identity-schema.md) |
+| **Phase** | Build — Sprint 1 complete (monorepo + CI, PostgreSQL RLS multi-tenancy, auth/RBAC, create-company, app shell + EN/AR RTL) |
+| **Current Sprint** | Sprint 1 done → **Sprint 2 (Accounting core)** next |
 | **Current Version** | v0.1.0 |
-| **Next Milestone** | A working dashboard in the browser — Login, Create Company, Sign in, Dashboard Shell, Sidebar, Theme, Company Switcher |
+| **Next Milestone** | Sprint 2 — Accounting core: Chart of Accounts, journal entries, posting engine, General Ledger, Trial Balance |
 | **Architecture Owner** | Ali S — Founder |
 | **Governing Stack** | [docs/architecture/FINAL_TECH_STACK.md](docs/architecture/FINAL_TECH_STACK.md) (Option A · Locked) |
-| **Last Updated** | 2026-07-22 |
+| **Last Updated** | 2026-07-27 |
 
 ---
 
