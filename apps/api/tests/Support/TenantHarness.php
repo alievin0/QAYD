@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Support;
 
+use App\Support\TenantContext;
+use Closure;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -124,5 +126,31 @@ final class TenantHarness
             'role_id' => $roleId,
             'membership_id' => $membershipId,
         ];
+    }
+
+    /**
+     * Run $fn with an established tenant context for $companyId — the container binding the Eloquent
+     * CompanyScope reads AND the transaction-local RLS GUC on the app connection, mirroring
+     * ResolveTenantCompany. The work runs inside a rolled-back transaction so tests stay isolated.
+     *
+     * @template T
+     *
+     * @param  Closure(): T  $fn
+     * @return T
+     */
+    public static function runInTenant(int $companyId, Closure $fn): mixed
+    {
+        app()->instance(TenantContext::BINDING_COMPANY_ID, $companyId);
+
+        $app = self::app();
+        $app->beginTransaction();
+        $app->select('SELECT set_config(?, ?, true)', [TenantContext::GUC_COMPANY_ID, (string) $companyId]);
+
+        try {
+            return $fn();
+        } finally {
+            $app->rollBack();
+            app()->forgetInstance(TenantContext::BINDING_COMPANY_ID);
+        }
     }
 }

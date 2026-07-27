@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Domain\Accounting\NoLedgerPostedActivityGuard;
+use App\Domain\Accounting\PostedActivityGuard;
 use App\Models\User;
 use App\Services\Identity\TokenService;
 use Illuminate\Http\Request;
@@ -15,7 +17,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // Chart-of-accounts posted-activity guard (S2-01). Until the ledger exists (S2-03 / S2-05) no
+        // account can carry posted lines; the posting stories replace this binding with a ledger-backed
+        // implementation without touching the Actions.
+        $this->app->bind(PostedActivityGuard::class, NoLedgerPostedActivityGuard::class);
     }
 
     /**
