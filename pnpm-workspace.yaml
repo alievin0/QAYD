@@ -1,0 +1,6 @@
+# pnpm workspace — covers the TypeScript surfaces only.
+# apps/api (Laravel/PHP) uses Composer; apps/ai (FastAPI/Python) uses uv/pip.
+# See ADR-0001 (polyglot monorepo, per-app tooling) and FINAL_TECH_STACK.md.
+packages:
+  - "apps/web"
+  - "packages/*"

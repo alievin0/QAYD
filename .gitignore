@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+vendor/
+.venv/
+__pycache__/
+*.pyc
+
+# Builds
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+*.key
+
+# Laravel (apps/api)
+apps/api/vendor/
+apps/api/storage/*.key
+apps/api/storage/logs/*.log
+apps/api/storage/framework/cache/*
+apps/api/storage/framework/sessions/*
+apps/api/storage/framework/views/*
+apps/api/bootstrap/cache/*.php
+
+# Python / uv (apps/ai)
+apps/ai/.venv/
+apps/ai/.ruff_cache/
+apps/ai/.mypy_cache/
+apps/ai/.pytest_cache/
+
+# Node / pnpm
+.pnpm-store/
+coverage/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.log
+
+# Colima / local docker state
+.colima/
