@@ -30,7 +30,17 @@ import { useI18n } from "../../../lib/i18n/locale-provider";
  */
 
 /** A Gulf-first base-currency set; KWD is the default (the platform's home market). */
-const CURRENCIES = ["KWD", "SAR", "AED", "BHD", "QAR", "OMR", "USD", "EUR", "GBP"] as const;
+const CURRENCIES = [
+  "KWD",
+  "SAR",
+  "AED",
+  "BHD",
+  "QAR",
+  "OMR",
+  "USD",
+  "EUR",
+  "GBP",
+] as const;
 
 const MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
 
@@ -52,7 +62,9 @@ export function CreateCompanyWizard() {
     const formatter = new Intl.DateTimeFormat(locale === "ar" ? "ar" : "en", {
       month: "long",
     });
-    return MONTHS.map((m) => formatter.format(new Date(Date.UTC(2000, m - 1, 1))));
+    return MONTHS.map((m) =>
+      formatter.format(new Date(Date.UTC(2000, m - 1, 1))),
+    );
   }, [locale]);
 
   function onSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -162,7 +174,10 @@ export function CreateCompanyWizard() {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <span id="base_currency_label" className="text-sm font-medium text-foreground">
+            <span
+              id="base_currency_label"
+              className="text-sm font-medium text-foreground"
+            >
               {t("auth.onboarding.baseCurrency")}
             </span>
             <Select
@@ -184,7 +199,10 @@ export function CreateCompanyWizard() {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <span id="fiscal_month_label" className="text-sm font-medium text-foreground">
+            <span
+              id="fiscal_month_label"
+              className="text-sm font-medium text-foreground"
+            >
               {t("auth.onboarding.fiscalYearStart")}
             </span>
             <Select

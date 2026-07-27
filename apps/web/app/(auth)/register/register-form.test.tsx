@@ -68,9 +68,7 @@ describe("RegisterForm", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /create account/i }));
 
-    await waitFor(() =>
-      expect(screen.getByRole("alert")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

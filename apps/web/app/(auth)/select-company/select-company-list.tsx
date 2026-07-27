@@ -39,9 +39,10 @@ export function CompanySelectList({ companies, next }: CompanySelectListProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [busyUuid, setBusyUuid] = useState<string | null>(null);
-  const [rowError, setRowError] = useState<{ uuid: string; kind: "denied" | "error" } | null>(
-    null,
-  );
+  const [rowError, setRowError] = useState<{
+    uuid: string;
+    kind: "denied" | "error";
+  } | null>(null);
 
   function onSelect(uuid: string) {
     if (pending) return;
@@ -56,7 +57,10 @@ export function CompanySelectList({ companies, next }: CompanySelectListProps) {
         });
         if (!response.ok) {
           setBusyUuid(null);
-          setRowError({ uuid, kind: response.status === 403 ? "denied" : "error" });
+          setRowError({
+            uuid,
+            kind: response.status === 403 ? "denied" : "error",
+          });
           return;
         }
         router.push(resolveNext(next));

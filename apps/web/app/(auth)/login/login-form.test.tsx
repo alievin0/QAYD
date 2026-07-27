@@ -125,12 +125,14 @@ describe("LoginForm — routing by company count", () => {
   it("surfaces a 429 lockout with the server Retry-After countdown", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        fakeResponse(
-          { code: "ACCOUNT_TEMPORARILY_LOCKED" },
-          { status: 429, headers: { "Retry-After": "720" } },
+      vi
+        .fn()
+        .mockResolvedValue(
+          fakeResponse(
+            { code: "ACCOUNT_TEMPORARILY_LOCKED" },
+            { status: 429, headers: { "Retry-After": "720" } },
+          ),
         ),
-      ),
     );
     renderForm();
     submitCredentials();

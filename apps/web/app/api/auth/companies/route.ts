@@ -35,7 +35,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  const parsed = createCompanyInputSchema.safeParse(await readJsonBody(request));
+  const parsed = createCompanyInputSchema.safeParse(
+    await readJsonBody(request),
+  );
   if (!parsed.success) {
     return NextResponse.json(
       {
@@ -60,7 +62,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       maxAge: COMPANY_COOKIE_MAX_AGE,
     });
 
-    return NextResponse.json({ success: true, data: { company: data.company } });
+    return NextResponse.json({
+      success: true,
+      data: { company: data.company },
+    });
   } catch (error) {
     return errorResponse(error);
   }

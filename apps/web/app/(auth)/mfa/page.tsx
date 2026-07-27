@@ -30,7 +30,9 @@ export default function MfaPage() {
         <CardDescription>{t("auth.mfa.subtitle")}</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        <p className="text-sm text-muted-foreground">{t("auth.mfa.comingSoon")}</p>
+        <p className="text-sm text-muted-foreground">
+          {t("auth.mfa.comingSoon")}
+        </p>
         <Button asChild>
           <Link href="/login">{t("auth.mfa.backToLogin")}</Link>
         </Button>

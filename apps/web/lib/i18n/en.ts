@@ -80,7 +80,8 @@ export const en = {
         "Too many attempts from this network. Please try again shortly.",
       lockout:
         "Too many failed sign-in attempts. Try again in {seconds} seconds.",
-      networkError: "Couldn't reach the server. Check your connection and retry.",
+      networkError:
+        "Couldn't reach the server. Check your connection and retry.",
       forgotPassword: "Forgot password?",
       noAccount: "New to QAYD?",
       registerLink: "Create an account",
@@ -124,7 +125,8 @@ export const en = {
     },
     onboarding: {
       title: "Create your company",
-      subtitle: "This sets up your workspace. You can refine the details later.",
+      subtitle:
+        "This sets up your workspace. You can refine the details later.",
       legalName: "Legal name",
       legalNameHint: "The registered legal entity name.",
       tradeName: "Trade name",
