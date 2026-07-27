@@ -4,3 +4,10 @@
 packages:
   - "apps/web"
   - "packages/*"
+
+# Approve native build scripts so `pnpm install --frozen-lockfile` is deterministic
+# on a clean CI runner (pnpm 10.4+ reads this from pnpm-workspace.yaml, not package.json).
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+  - unrs-resolver
