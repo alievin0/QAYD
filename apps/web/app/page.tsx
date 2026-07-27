@@ -1,16 +1,13 @@
-export default function Home() {
-  return (
-    <main>
-      <h1>QAYD</h1>
-      <p>The AI Financial Operating System.</p>
-      <p>
-        This is the QAYD web app — the browser-facing surface of the platform.
-        It holds no database credentials; it will consume the Laravel API at{" "}
-        <code>/api/v1</code> through the typed SDK in a later story.
-      </p>
-      <p>
-        Service health is exposed at <a href="/health">/health</a>.
-      </p>
-    </main>
-  );
+import { redirect } from "next/navigation";
+
+import { DEFAULT_POST_AUTH_PATH } from "../lib/auth/next-param";
+
+/**
+ * Root `/` is the entry hop, not a screen. It forwards to the default in-app destination; the auth-gate
+ * middleware then either lets the request through (session present) or bounces it to `/login`. The full
+ * post-auth resolver (onboarding gate, company selection, AI-home vs conventional dashboard) lands with
+ * the auth screens in S1-15.
+ */
+export default function RootPage(): never {
+  redirect(DEFAULT_POST_AUTH_PATH);
 }

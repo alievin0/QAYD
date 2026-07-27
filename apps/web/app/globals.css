@@ -1,0 +1,38 @@
+/*
+ * Global stylesheet for apps/web. Pulls in the QAYD brass/warm-ink design tokens (the `--qayd-*` scale
+ * and the shadcn semantic HSL aliases) from `@qayd/config`, then layers Tailwind. Light/dark is driven
+ * by the `.dark` class on `<html>` (toggled by `@qayd/ui`'s ThemeProvider); Arabic RTL by `dir="rtl"`.
+ */
+@import "@qayd/config/tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+
+  /* Font-family stacks the token preset's `font-display`/`font-text`/`font-arabic` resolve against.
+     System-first (no network fetch, CI-safe); a named webfont can be layered in a later polish pass. */
+  --font-display: "Schibsted Grotesk", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+  --font-text: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    sans-serif;
+  --font-arabic: "IBM Plex Sans Arabic", "Noto Sans Arabic", "Geeza Pro",
+    "Segoe UI", ui-sans-serif, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background font-text text-foreground antialiased;
+  }
+}

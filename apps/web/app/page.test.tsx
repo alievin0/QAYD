@@ -1,22 +1,15 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
-import Home from "./page";
+import { describe, expect, it, vi } from "vitest";
 
-describe("Home page", () => {
-  it("renders the QAYD heading", () => {
-    render(<Home />);
+// `redirect()` throws internally in Next; mock it so we can assert the target without the throw.
+// `vi.hoisted` lets the factory reference the spy despite the mock being hoisted above the imports.
+const { redirect } = vi.hoisted(() => ({ redirect: vi.fn() }));
+vi.mock("next/navigation", () => ({ redirect }));
 
-    expect(
-      screen.getByRole("heading", { level: 1, name: /qayd/i }),
-    ).toBeInTheDocument();
-  });
+import RootPage from "./page";
 
-  it("links to the health probe", () => {
-    render(<Home />);
-
-    expect(screen.getByRole("link", { name: "/health" })).toHaveAttribute(
-      "href",
-      "/health",
-    );
+describe("Root page", () => {
+  it("redirects to the default in-app destination", () => {
+    RootPage();
+    expect(redirect).toHaveBeenCalledWith("/dashboard");
   });
 });

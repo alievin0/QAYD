@@ -9,6 +9,9 @@ const nextConfig: NextConfig = {
   // root to the monorepo root silences Next's multi-lockfile / workspace-root
   // inference warning and keeps standalone tracing deterministic.
   outputFileTracingRoot: join(currentDir, "..", ".."),
+  // The workspace UI package ships prebuilt "use client" components; transpiling it through Next keeps
+  // the client/server boundary and JSX runtime consistent with the app's own build.
+  transpilePackages: ["@qayd/ui"],
 };
 
 export default nextConfig;
