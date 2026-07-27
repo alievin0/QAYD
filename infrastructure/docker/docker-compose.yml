@@ -1,0 +1,43 @@
+# QAYD — local development data services (Postgres + Redis).
+# Business logic lives in apps/api (Laravel 12); these are the managed data services
+# (see docs/architecture/FINAL_TECH_STACK.md and docs/execution/SPRINT_01.md — S1-03).
+# Bring up:  docker compose -f infrastructure/docker/docker-compose.yml up -d
+name: qayd
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: qayd-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-qayd}
+      POSTGRES_USER: ${POSTGRES_USER:-qayd}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-qayd_dev_password}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - qayd_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-qayd} -d ${POSTGRES_DB:-qayd}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: qayd-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - qayd_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  qayd_pgdata:
+  qayd_redisdata:
