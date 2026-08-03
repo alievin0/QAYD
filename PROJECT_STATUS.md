@@ -8,15 +8,15 @@ reading dozens of documents.
 
 | Field | Value |
 |---|---|
-| **Status** | **Sprint 2 (Accounting core) IN PROGRESS** — **S2-01 → S2-04 COMPLETE & CLOSED** (tags `s2-01-complete` … `s2-04-complete`); **S2-05 (Posting engine) IMPLEMENTED, awaiting review**. Base `v0.1.0`. |
-| **Documentation** | Frozen (`architecture-freeze-v1`); one build decision since: [ADR-0010](docs/architecture/adr/0010-auth-service-authoritative-for-identity-schema.md) |
-| **Phase** | Build — Sprint 2 (Accounting core): S2-01 (`accounts` schema) + S2-02 (COA API) + S2-03 (journal schema + immutability triggers) + S2-04 (journal draft lifecycle: models/DTOs/actions, optimistic concurrency) done; S2-05 (posting engine: `PostingService`, fiscal-calendar seam, `ledger_entries` projection, permanent numbering) implemented |
-| **Current Sprint** | **Sprint 2 (Accounting core)** — S2-01 → S2-04 complete (**4 of 14 stories closed**); S2-05 implemented and under review; next: S2-06 (Reverse & void) |
+| **Status** | **Sprint 2 (Accounting core) IN PROGRESS** — **S2-01 → S2-06 COMPLETE & CLOSED** (tags `s2-01-complete` … `s2-06-complete`). Base `v0.1.0`. |
+| **Documentation** | Frozen (`architecture-freeze-v1`); one build decision since: [ADR-0010](docs/architecture/adr/0010-auth-service-authoritative-for-identity-schema.md). The Phase 1–3 research corpus (`docs/research/`, `docs/architecture/knowledge/`) is **frozen reference material** — it governs nothing and never overrides an ADR. |
+| **Phase** | Build — Sprint 2 (Accounting core): S2-01 (`accounts` schema) + S2-02 (COA API) + S2-03 (journal schema + immutability triggers) + S2-04 (journal draft lifecycle: models/DTOs/actions, optimistic concurrency) + S2-05 (posting engine: `PostingService`, fiscal-calendar seam, `ledger_entries` projection, permanent numbering) + S2-06 (reverse & void: mirror entry + two-way linkage, one-reversal DB guard, segregation of duties) done |
+| **Current Sprint** | **Sprint 2 (Accounting core)** — S2-01 → S2-06 complete (**6 of 14 stories closed · 34 of 47 committed points**); next: S2-07 (Fiscal years & periods + close/lock) |
 | **Current Version** | v0.1.0 |
-| **Next Milestone** | S2-06 — Reverse & void (`ReverseJournalEntryAction` mirror entry + linkage, `VoidJournalEntryAction`, both refusing to mutate a posted record); + deferred: ledger-backed guard (TD-11, now unblocked), `SetOpeningBalanceAction` (TD-10, now unblocked), period-level posting gate (TD-13 → S2-07), the INSERT-into-posted / header-immutability ADRs |
+| **Next Milestone** | S2-07 — Fiscal years & periods + close/lock (`fiscal_periods` schema, `ClosePeriodAction`/`LockPeriodAction`/`ReopenPeriodAction`, and the period-backed `FiscalCalendarResolver` binding that closes TD-13); + deferred: ledger-backed guard (TD-11, unblocked), `SetOpeningBalanceAction` (TD-10, unblocked), the INSERT-into-posted / header-immutability ADRs |
 | **Architecture Owner** | Ali S — Founder |
 | **Governing Stack** | [docs/architecture/FINAL_TECH_STACK.md](docs/architecture/FINAL_TECH_STACK.md) (Option A · Locked) |
-| **Last Updated** | 2026-07-28 |
+| **Last Updated** | 2026-08-04 |
 
 ---
 
