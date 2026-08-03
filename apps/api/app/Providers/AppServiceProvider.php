@@ -3,7 +3,7 @@
 namespace App\Providers;
 
 use App\Domain\Accounting\FiscalCalendarResolver;
-use App\Domain\Accounting\FiscalYearCalendarResolver;
+use App\Domain\Accounting\FiscalPeriodCalendarResolver;
 use App\Domain\Accounting\NoLedgerPostedActivityGuard;
 use App\Domain\Accounting\PostedActivityGuard;
 use App\Models\User;
@@ -24,11 +24,13 @@ class AppServiceProvider extends ServiceProvider
         // implementation without touching the Actions.
         $this->app->bind(PostedActivityGuard::class, NoLedgerPostedActivityGuard::class);
 
-        // Fiscal-calendar seam (S2-05). The posting engine depends only on the FiscalCalendarResolver
-        // interface, never on fiscal_years/fiscal_periods directly. S2-05 resolves + locks the fiscal
-        // YEAR; S2-07 (Fiscal Periods) transparently rebinds this to a period-level resolver without
-        // touching JournalEntryPostingService.
-        $this->app->bind(FiscalCalendarResolver::class, FiscalYearCalendarResolver::class);
+        // Fiscal-calendar seam (S2-05 → S2-07). The posting engine depends only on the
+        // FiscalCalendarResolver interface, never on fiscal_years/fiscal_periods directly — which is what
+        // let S2-07 swap the year-level resolver for the period-level one below without changing a line
+        // of JournalEntryPostingService. The period resolver also narrows the posting lock from the
+        // fiscal YEAR row to the PERIOD row (TD-13), so postings into different months no longer
+        // serialize against each other.
+        $this->app->bind(FiscalCalendarResolver::class, FiscalPeriodCalendarResolver::class);
     }
 
     /**

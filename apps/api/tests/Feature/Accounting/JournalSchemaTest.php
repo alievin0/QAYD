@@ -82,9 +82,13 @@ it('gives journal_lines money columns as NUMERIC(19,4) and a NOT NULL company_id
 it('defers columns whose FK targets do not exist yet (documented S2-03 scope)', function (): void {
     $schema = Schema::connection(TenantHarness::OWNER);
 
-    foreach (['branch_id', 'fiscal_period_id', 'recurring_template_id', 'ai_conversation_id'] as $col) {
+    foreach (['branch_id', 'recurring_template_id', 'ai_conversation_id'] as $col) {
         expect($schema->hasColumn('journal_entries', $col))->toBeFalse("journal_entries.{$col} should be deferred");
     }
+
+    // `fiscal_period_id` was on that list until S2-07 created the table it points at. It is now present
+    // and stamped at posting time, so the deferral is resolved rather than merely relaxed.
+    expect($schema->hasColumn('journal_entries', 'fiscal_period_id'))->toBeTrue();
     foreach (['branch_id', 'cost_center_id', 'project_id', 'department_id', 'customer_id', 'vendor_id', 'tax_code_id', 'tax_rate_id'] as $col) {
         expect($schema->hasColumn('journal_lines', $col))->toBeFalse("journal_lines.{$col} should be deferred");
     }

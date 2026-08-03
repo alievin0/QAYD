@@ -8,6 +8,7 @@ use App\Actions\Accounting\ReverseJournalEntryAction;
 use App\Actions\Accounting\VoidJournalEntryAction;
 use App\Data\Accounting\JournalEntryData;
 use App\Data\Accounting\JournalLineData;
+use App\Domain\Accounting\MonthlyFiscalPeriodGenerator;
 use App\Exceptions\Accounting\ReversalRuleException;
 use App\Models\JournalEntry;
 use App\Models\JournalLine;
@@ -44,14 +45,23 @@ function revAccount(int $companyId): int
     )->id;
 }
 
-/** An OPEN fiscal year covering 2026 — the posting engine refuses a date outside an open year. */
+/**
+ * An OPEN fiscal year covering 2026, filled with its twelve open monthly periods — since S2-07 the
+ * posting engine resolves a date to a PERIOD and refuses any date no open period covers.
+ */
 function revFiscalYear(int $companyId): int
 {
-    return (int) TenantHarness::owner()->selectOne(
+    $yearId = (int) TenantHarness::owner()->selectOne(
         "INSERT INTO fiscal_years (company_id, name, start_date, end_date, status)
          VALUES (?, ?, '2026-01-01', '2026-12-31', 'open') RETURNING id",
         [$companyId, 'FY2026-'.bin2hex(random_bytes(3))],
     )->id;
+
+    MonthlyFiscalPeriodGenerator::generate(
+        TenantHarness::owner(), $companyId, $yearId, '2026-01-01', '2026-12-31', 'open',
+    );
+
+    return $yearId;
 }
 
 /** A second active member, so segregation of duties is actually in force for the company. */

@@ -111,6 +111,7 @@ final class JournalEntryPostingService
                 'status' => 'posted',
                 'journal_number' => $number,
                 'fiscal_year_id' => $period->fiscalYearId,
+                'fiscal_period_id' => $period->fiscalPeriodId,
                 'posting_date' => $postedAt,
                 'posted_at' => $postedAt,
                 'posted_by' => $actorUserId,
@@ -191,8 +192,9 @@ final class JournalEntryPostingService
     /**
      * Write one immutable {@see LedgerEntry} per posted line — the 1:1 GL projection. `signed_base_amount`
      * is `+base_debit` for a debit leg and `-base_credit` for a credit leg, so an account balance is a
-     * single `SUM(signed_base_amount)`. `fiscal_period_id` stays null until S2-07 (the seam resolves only
-     * the year today); the dimension/source copies land when `journal_lines` carries them.
+     * single `SUM(signed_base_amount)`. Since S2-07 the seam resolves the fiscal PERIOD as well as the
+     * year, so `fiscal_period_id` is always populated (the column is `NOT NULL` with a real FK); the
+     * dimension/source copies land when `journal_lines` carries them.
      *
      * @param  Collection<int, JournalLine>  $lines
      */

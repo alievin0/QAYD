@@ -35,7 +35,13 @@ final class RbacSeeder extends Seeder
      * @var array<string, list<string>>
      */
     private const CATALOGUE = [
-        'accounting' => ['read', 'create', 'update', 'delete', 'export', 'approve', 'coa.manage', 'journal.read'],
+        // `period.*` (S2-07) is split four ways on purpose: closing a month, hard-locking it after audit
+        // sign-off, reopening a closed one, and overriding a hard lock are four different levels of
+        // authority over the same record (GENERAL_LEDGER.md "# Permissions").
+        'accounting' => [
+            'read', 'create', 'update', 'delete', 'export', 'approve', 'coa.manage', 'journal.read',
+            'period.close', 'period.lock', 'period.reopen', 'period.hard_lock_override',
+        ],
         'bank' => ['read', 'create', 'update', 'delete', 'reconcile', 'transfer'],
         'payroll' => ['read', 'calculate', 'approve', 'release', 'export'],
         'inventory' => ['read', 'create', 'adjust', 'transfer', 'delete'],
@@ -78,6 +84,9 @@ final class RbacSeeder extends Seeder
         ]],
         'finance_manager' => ['Finance Manager', 'مدير المالية', [
             'reads', 'accounting.coa.manage', 'accounting.create', 'accounting.update', 'accounting.export', 'accounting.approve',
+            // Closes, locks and reopens months — but NOT accounting.period.hard_lock_override, which
+            // stays with Owner/CEO/CFO (GENERAL_LEDGER.md "# Permissions" role matrix).
+            'accounting.period.close', 'accounting.period.lock', 'accounting.period.reopen',
             'bank.reconcile', 'bank.create', 'bank.update', 'tax.calculate', 'tax.export',
             'reports.export', 'reports.share', 'documents.upload', 'ai.chat', 'ai.analyze',
         ]],

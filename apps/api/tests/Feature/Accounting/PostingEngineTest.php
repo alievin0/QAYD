@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Actions\Accounting\PostJournalEntryAction;
+use App\Domain\Accounting\MonthlyFiscalPeriodGenerator;
 use App\Events\Accounting\JournalEntryPosted;
 use App\Exceptions\Accounting\ClosedPeriodException;
 use App\Exceptions\Accounting\PostingRuleException;
@@ -39,14 +40,25 @@ function peAccount(int $companyId, string $status = 'active'): int
     )->id;
 }
 
-/** A fiscal year covering 2026 for the company, in the given status. */
+/**
+ * A fiscal year covering 2026 for the company, in the given status, filled with its twelve monthly
+ * periods in the matching status. Since S2-07 the posting engine resolves a date to a PERIOD, so a year
+ * without periods accepts nothing — generating them is part of building a usable year, and going through
+ * the production generator means the fixture cannot drift from what onboarding actually creates.
+ */
 function peFiscalYear(int $companyId, string $status = 'open', string $name = 'FY2026'): int
 {
-    return (int) TenantHarness::owner()->selectOne(
+    $yearId = (int) TenantHarness::owner()->selectOne(
         "INSERT INTO fiscal_years (company_id, name, start_date, end_date, status)
          VALUES (?, ?, '2026-01-01', '2026-12-31', ?::fiscal_year_status) RETURNING id",
         [$companyId, $name, $status],
     )->id;
+
+    MonthlyFiscalPeriodGenerator::generate(
+        TenantHarness::owner(), $companyId, $yearId, '2026-01-01', '2026-12-31', $status,
+    );
+
+    return $yearId;
 }
 
 /**
@@ -120,12 +132,20 @@ function peSeedPostedLedgerRow(int $companyId): array
         [$companyId, $entryId, $accountId],
     )->id;
 
+    // The period covering the entry date. `ledger_entries.fiscal_period_id` is NOT NULL since S2-07 —
+    // a projection row that cannot name its period is not something a month can be closed against — so
+    // even a hand-seeded ledger row has to resolve it.
+    $periodId = (int) $owner->selectOne(
+        "SELECT id FROM fiscal_periods WHERE fiscal_year_id = ? AND '2026-07-01' BETWEEN start_date AND end_date",
+        [$fiscalYearId],
+    )->id;
+
     $ledgerId = (int) $owner->selectOne(
         "INSERT INTO ledger_entries (company_id, journal_entry_id, journal_line_id, account_id, fiscal_year_id,
-                                     entry_date, posted_at, entry_type, currency_code,
+                                     fiscal_period_id, entry_date, posted_at, entry_type, currency_code,
                                      debit_amount, credit_amount, base_debit_amount, base_credit_amount, signed_base_amount)
-         VALUES (?, ?, ?, ?, ?, '2026-07-01', now(), 'manual', 'KWD', '30.0000', 0, '30.0000', 0, '30.0000') RETURNING id",
-        [$companyId, $entryId, $lineId, $accountId, $fiscalYearId],
+         VALUES (?, ?, ?, ?, ?, ?, '2026-07-01', now(), 'manual', 'KWD', '30.0000', 0, '30.0000', 0, '30.0000') RETURNING id",
+        [$companyId, $entryId, $lineId, $accountId, $fiscalYearId, $periodId],
     )->id;
 
     return ['entry_id' => $entryId, 'ledger_id' => $ledgerId];
