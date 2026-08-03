@@ -26,6 +26,10 @@ use Illuminate\Database\Eloquent\Model;
  * @property string $base_total_debit
  * @property string $base_total_credit
  * @property string $status
+ * @property bool $is_reversal
+ * @property int|null $reversed_entry_id
+ * @property int|null $reversal_entry_id
+ * @property int|null $created_by
  * @property bool $ai_generated
  * @property string|null $ai_confidence
  * @property int $version
@@ -41,6 +45,12 @@ class JournalEntry extends Model
     public const STATUS_PENDING_APPROVAL = 'pending_approval';
 
     public const STATUS_REJECTED = 'rejected';
+
+    public const STATUS_POSTED = 'posted';
+
+    public const STATUS_REVERSED = 'reversed';
+
+    public const STATUS_VOIDED = 'voided';
 
     /**
      * The only statuses whose entry (and lines) may still be edited — the application-layer half of the
