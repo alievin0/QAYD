@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Accounting\AccountController;
+use App\Http\Controllers\Accounting\LedgerController;
 use App\Http\Controllers\Identity\CreateCompanyController;
 use App\Http\Controllers\Identity\LoginController;
 use App\Http\Controllers\Identity\LogoutController;
@@ -72,6 +73,12 @@ Route::prefix('v1/accounting')
             Route::get('accounts', [AccountController::class, 'index']);
             Route::get('accounts/tree', [AccountController::class, 'tree']);
             Route::get('accounts/{account}', [AccountController::class, 'show'])->whereNumber('account');
+
+            // S2-08 — general ledger reads. A read of posted history, so it sits under the same
+            // read permission as the chart itself; the running balance is derived at query time from
+            // `ledger_entries` and nothing on this path writes.
+            Route::get('ledger/accounts/{account}/activity', [LedgerController::class, 'activity'])
+                ->whereNumber('account');
         });
 
         Route::middleware('permission:accounting.coa.manage')->group(function (): void {
