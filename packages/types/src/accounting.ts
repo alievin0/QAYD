@@ -95,6 +95,98 @@ export interface AccountResult {
   account: Account;
 }
 
+// — Trial balance —
+
+/**
+ * One account's line on a trial balance, computed or frozen.
+ *
+ * Every amount is a STRING. The server derives these from `NUMERIC(19,4)` and a float would disagree
+ * with it in the fourth decimal — in a trial balance, whose entire purpose is to prove the ledger sums
+ * to zero, that is not a display artefact but a false proof.
+ */
+export const trialBalanceRowSchema = z.object({
+  account_id: z.number().int(),
+  account_code: z.string(),
+  account_name_en: z.string(),
+  account_name_ar: z.string().nullable(),
+  normal_balance: z.string(),
+  opening_debit: z.string(),
+  opening_credit: z.string(),
+  period_debit: z.string(),
+  period_credit: z.string(),
+  closing_debit: z.string(),
+  closing_credit: z.string(),
+  is_abnormal_balance: z.boolean(),
+  source_line_count: z.number().int(),
+});
+export type TrialBalanceRow = z.infer<typeof trialBalanceRowSchema>;
+
+/**
+ * `data` of `GET /accounting/reports/trial-balance` — the live, unstored trial balance.
+ *
+ * `is_balanced` is the SERVER's verdict, computed against the company's own rounding tolerance. A
+ * client renders it; it must not re-derive it from the totals, because the tolerance is configurable
+ * and a client that assumed exact zero would eventually disagree with the ledger.
+ */
+export interface ComputedTrialBalanceResult {
+  fiscal_period_id: number;
+  period_start_date: string;
+  as_of_date: string;
+  total_debit: string;
+  total_credit: string;
+  variance: string;
+  is_balanced: boolean;
+  lines: TrialBalanceRow[];
+}
+
+/** A frozen trial-balance run. Immutable once approved — a correction is a new version. */
+export const trialBalanceSnapshotSchema = z.object({
+  id: z.number().int(),
+  fiscal_period_id: z.number().int().nullable(),
+  period_start_date: z.string(),
+  as_of_date: z.string(),
+  type: z.string(),
+  status: z.string(),
+  version: z.number().int(),
+  is_current: z.boolean(),
+  parent_snapshot_id: z.number().int().nullable(),
+  currency_code: z.string(),
+  total_debit: z.string(),
+  total_credit: z.string(),
+  variance: z.string(),
+  account_count: z.number().int(),
+  line_count: z.number().int(),
+  has_warnings: z.boolean(),
+  content_hash: z.string().nullable(),
+  approved_by: z.number().int().nullable(),
+});
+export type TrialBalanceSnapshot = z.infer<typeof trialBalanceSnapshotSchema>;
+
+/** `POST /accounting/reports/trial-balance` body. */
+export const generateTrialBalanceInputSchema = z.object({
+  fiscal_period_id: z.number().int().min(1),
+  type: z.string().optional(),
+});
+export type GenerateTrialBalanceInput = z.infer<
+  typeof generateTrialBalanceInputSchema
+>;
+
+/**
+ * `data` of the generate call. `queued` is true when the run was handed to the reports queue and the
+ * response was `202` — the snapshot exists but is still `generating`, and the caller polls the show
+ * endpoint. It is false when the run completed inline (`201`).
+ */
+export interface GenerateTrialBalanceResult {
+  snapshot: TrialBalanceSnapshot;
+  queued: boolean;
+}
+
+/** `data` of `GET /accounting/reports/trial-balance/{id}` — a stored snapshot with its frozen lines. */
+export interface TrialBalanceSnapshotResult {
+  snapshot: TrialBalanceSnapshot;
+  lines: TrialBalanceRow[];
+}
+
 // — Fiscal periods (read-only) —
 
 /**

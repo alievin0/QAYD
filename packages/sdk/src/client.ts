@@ -4,8 +4,12 @@ import type {
   AccountResult,
   AccountTreeResult,
   AccountTypeListResult,
+  ComputedTrialBalanceResult,
   CreateJournalEntryInput,
   FiscalPeriodListResult,
+  GenerateTrialBalanceInput,
+  GenerateTrialBalanceResult,
+  TrialBalanceSnapshotResult,
   JournalEntryListResult,
   JournalEntryResult,
   ReverseJournalEntryInput,
@@ -241,6 +245,58 @@ export class QaydClient {
   /** `POST /companies` — an email-verified user with zero companies creates one and becomes its Owner. */
   createCompany(input: CreateCompanyInput): Promise<Envelope<CreateCompanyResult>> {
     return this.request<CreateCompanyResult>({ method: "POST", path: "/companies", body: input });
+  }
+
+  // — Accounting: trial balance (`/api/v1/accounting/reports/trial-balance`) —
+
+  /**
+   * `GET /accounting/reports/trial-balance` — the live, unstored trial balance for a period
+   * (accounting.trial_balance.read). Always current, never approved: it is a computation, not a record.
+   */
+  computeTrialBalance(
+    fiscalPeriodId: number,
+    companyId?: string,
+  ): Promise<Envelope<ComputedTrialBalanceResult>> {
+    return this.request<ComputedTrialBalanceResult>({
+      method: "GET",
+      path: "/accounting/reports/trial-balance",
+      query: { fiscal_period_id: fiscalPeriodId },
+      companyId,
+    });
+  }
+
+  /**
+   * `POST /accounting/reports/trial-balance` — freeze a snapshot (accounting.trial_balance.generate).
+   *
+   * Answers `201` when the run completed inline and `202` when it was handed to the reports queue; in
+   * both cases the snapshot exists, so a caller polls {@link trialBalanceSnapshot} either way rather
+   * than branching on which happened. `queued` in the payload says which it was.
+   */
+  generateTrialBalanceSnapshot(
+    input: GenerateTrialBalanceInput,
+    companyId?: string,
+  ): Promise<Envelope<GenerateTrialBalanceResult>> {
+    return this.request<GenerateTrialBalanceResult>({
+      method: "POST",
+      path: "/accounting/reports/trial-balance",
+      body: input,
+      companyId,
+    });
+  }
+
+  /**
+   * `GET /accounting/reports/trial-balance/{id}` — a stored snapshot with its frozen lines
+   * (accounting.trial_balance.read).
+   */
+  trialBalanceSnapshot(
+    id: number,
+    companyId?: string,
+  ): Promise<Envelope<TrialBalanceSnapshotResult>> {
+    return this.request<TrialBalanceSnapshotResult>({
+      method: "GET",
+      path: `/accounting/reports/trial-balance/${id}`,
+      companyId,
+    });
   }
 
   // — Accounting: fiscal periods (`/api/v1/accounting/fiscal-periods`) —
