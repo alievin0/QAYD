@@ -8,12 +8,12 @@ reading dozens of documents.
 
 | Field | Value |
 |---|---|
-| **Status** | **Sprint 2 (Accounting core) IN PROGRESS** — **S2-01 → S2-10 COMPLETE & CLOSED** (tags `s2-01-complete` … `s2-10-complete`). Base `v0.1.0`. |
+| **Status** | **Sprint 2 (Accounting core) IN PROGRESS** — **S2-01 → S2-11 COMPLETE & CLOSED** (tags `s2-01-complete` … `s2-11-complete`). Base `v0.1.0`. |
 | **Documentation** | Frozen (`architecture-freeze-v1`); one build decision since: [ADR-0010](docs/architecture/adr/0010-auth-service-authoritative-for-identity-schema.md). The Phase 1–3 research corpus (`docs/research/`, `docs/architecture/knowledge/`) is **frozen reference material** — it governs nothing and never overrides an ADR. |
 | **Phase** | Build — Sprint 2 (Accounting core): S2-01 (`accounts` schema) + S2-02 (COA API) + S2-03 (journal schema + immutability triggers) + S2-04 (journal draft lifecycle: models/DTOs/actions, optimistic concurrency) + S2-05 (posting engine: `PostingService`, fiscal-calendar seam, `ledger_entries` projection, permanent numbering) + S2-06 (reverse & void: mirror entry + two-way linkage, one-reversal DB guard, segregation of duties) + S2-07 (fiscal periods: month-level calendar, close/lock/reopen, period-backed posting gate) + S2-08 (general ledger reads: account activity with a running balance, cursor-paginated) done |
-| **Current Sprint** | **Sprint 2 (Accounting core)** — S2-01 → S2-10 complete (**10 of 14 stories closed · 52 of 69 story points**); next: S2-11 (Journal-entry editor) |
+| **Current Sprint** | **Sprint 2 (Accounting core)** — S2-01 → S2-11 complete (**11 of 14 stories closed · 60 of 69 story points**); next: S2-12 (Trial-balance screen) |
 | **Current Version** | v0.1.0 |
-| **Next Milestone** | S2-11 — Journal-entry editor (line grid, client-side `deriveBalance` mirroring the backend check, draft save, post with `Idempotency-Key`); + deferred: `accounts.allow_posting` (TD-15 — S2-11 needs it), ledger-backed guard (TD-11, unblocked), `SetOpeningBalanceAction` (TD-10, unblocked), fiscal-year lifecycle + year↔period status coupling (TD-20/TD-21), the INSERT-into-posted / header-immutability ADRs |
+| **Next Milestone** | S2-12 — Trial-balance screen (the frontend over the S2-09 compute/snapshot API); then S2-13 (the rest of idempotency + the `accounting.journal.posted` Reverb broadcast) and S2-14 (nightly integrity job); + deferred: ledger-backed guard (TD-11, unblocked), `SetOpeningBalanceAction` (TD-10, unblocked), fiscal-year lifecycle + year↔period status coupling (TD-20/TD-21), the INSERT-into-posted / header-immutability ADRs |
 | **Architecture Owner** | Ali S — Founder |
 | **Governing Stack** | [docs/architecture/FINAL_TECH_STACK.md](docs/architecture/FINAL_TECH_STACK.md) (Option A · Locked) |
 | **Last Updated** | 2026-08-04 |
