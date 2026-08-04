@@ -272,6 +272,35 @@ it('refuses a line on an inactive account (422 ACCOUNT_INACTIVE) and writes no l
     expect(TenantHarness::owner()->table('ledger_entries')->where('journal_entry_id', $id)->count())->toBe(0);
 });
 
+it('refuses a line on a header account (422 ACCOUNT_NOT_POSTABLE) and writes no ledger row', function (): void {
+    $c = TenantHarness::seedCompany('Header Post Co');
+    peFiscalYear($c['company_id']);
+
+    // A parent becomes a header the moment it gains a child — the database sees to that.
+    $header = peAccount($c['company_id']);
+    $child = peAccount($c['company_id']);
+    TenantHarness::owner()->statement('UPDATE accounts SET parent_id = ? WHERE id = ?', [$header, $child]);
+
+    $other = peAccount($c['company_id']);
+    $entryId = peDraft($c['company_id'], [[$header, '10.0000', '0'], [$other, '0', '10.0000']]);
+
+    TenantHarness::runInTenant($c['company_id'], function () use ($entryId) {
+        try {
+            app(PostJournalEntryAction::class)->execute(JournalEntry::query()->findOrFail($entryId));
+            expect(false)->toBeTrue('posting to a header account should have been refused');
+        } catch (PostingRuleException $e) {
+            expect($e->errorCode())->toBe('ACCOUNT_NOT_POSTABLE');
+            expect($e->errorStatus())->toBe(422);
+        }
+    });
+
+    $count = TenantHarness::owner()->scalar(
+        'SELECT COUNT(*) FROM ledger_entries WHERE journal_entry_id = ?',
+        [$entryId],
+    );
+    expect((int) $count)->toBe(0);
+});
+
 it('refuses posting an entry with no lines (422 CANNOT_POST_EMPTY)', function (): void {
     $co = TenantHarness::seedCompany('Empty Co');
     peFiscalYear($co['company_id']);

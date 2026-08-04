@@ -147,6 +147,9 @@ final class AccountController extends Controller
             'normal_balance' => $account->normal_balance,
             'status' => $account->status,
             'is_control_account' => $account->is_control_account,
+            // Whether a journal line may reference this account directly. Carried on every account
+            // payload so a client never has to guess it from the tree shape — a leaf can be a header.
+            'allow_posting' => $account->allow_posting,
             'control_account_of' => $account->control_account_of,
             'account_type' => $type instanceof AccountType ? [
                 'id' => $type->id,

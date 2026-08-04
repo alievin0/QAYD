@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Models\User;
 use Database\Seeders\AccountTypeSeeder;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Artisan;
 use Tests\Support\AuthFixtures;
 use Tests\Support\RbacFixtures;
@@ -227,6 +228,56 @@ it('deactivates an account', function (): void {
         ->postJson("/api/v1/accounting/accounts/{$id}/deactivate", [], ['X-Company-Id' => $m['uuid']])
         ->assertOk()
         ->assertJsonPath('data.account.status', 'inactive');
+});
+
+// ---------------------------------------------------------------- postability (S2-11 prerequisite)
+
+it('carries allow_posting on every account payload', function (): void {
+    $m = apiMember(['accounting.journal.read', 'accounting.coa.manage']);
+
+    $this->actingAs($m['user'], 'web')->postJson('/api/v1/accounting/accounts', [
+        'account_type_id' => apiType('asset'), 'code' => '1500', 'name_en' => 'Leaf', 'name_ar' => 'ورقة',
+    ], ['X-Company-Id' => $m['uuid']])
+        ->assertCreated()
+        // A new account is postable until it becomes a parent.
+        ->assertJsonPath('data.account.allow_posting', true);
+});
+
+it('stops a parent being postable the moment it gains a child', function (): void {
+    $m = apiMember(['accounting.journal.read', 'accounting.coa.manage']);
+
+    $parentId = $this->actingAs($m['user'], 'web')->postJson('/api/v1/accounting/accounts', [
+        'account_type_id' => apiType('asset'), 'code' => '1600', 'name_en' => 'Header', 'name_ar' => 'رئيسي',
+    ], ['X-Company-Id' => $m['uuid']])->assertCreated()->json('data.account.id');
+
+    $this->actingAs($m['user'], 'web')->postJson('/api/v1/accounting/accounts', [
+        'account_type_id' => apiType('asset'), 'code' => '1610', 'name_en' => 'Child', 'name_ar' => 'فرعي',
+        'parent_id' => $parentId,
+    ], ['X-Company-Id' => $m['uuid']])->assertCreated();
+
+    // The database cleared the parent's flag; nothing in the application had to remember to.
+    $this->actingAs($m['user'], 'web')
+        ->getJson("/api/v1/accounting/accounts/{$parentId}", ['X-Company-Id' => $m['uuid']])
+        ->assertOk()
+        ->assertJsonPath('data.account.allow_posting', false);
+});
+
+it('lets the database refuse making a parent postable again', function (): void {
+    $m = apiMember(['accounting.journal.read', 'accounting.coa.manage']);
+
+    $parentId = $this->actingAs($m['user'], 'web')->postJson('/api/v1/accounting/accounts', [
+        'account_type_id' => apiType('asset'), 'code' => '1700', 'name_en' => 'Header', 'name_ar' => 'رئيسي',
+    ], ['X-Company-Id' => $m['uuid']])->assertCreated()->json('data.account.id');
+
+    $this->actingAs($m['user'], 'web')->postJson('/api/v1/accounting/accounts', [
+        'account_type_id' => apiType('asset'), 'code' => '1710', 'name_en' => 'Child', 'name_ar' => 'فرعي',
+        'parent_id' => $parentId,
+    ], ['X-Company-Id' => $m['uuid']])->assertCreated();
+
+    expect(fn () => TenantHarness::owner()->statement(
+        'UPDATE accounts SET allow_posting = true WHERE id = ?',
+        [$parentId],
+    ))->toThrow(QueryException::class);
 });
 
 // ---------------------------------------------------------------- account-type catalogue (S2-10)

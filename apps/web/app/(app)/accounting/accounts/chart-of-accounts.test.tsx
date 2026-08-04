@@ -40,6 +40,8 @@ function node(
     normal_balance: "debit",
     status: "active",
     is_control_account: false,
+    // Matches what the database maintains: an account with children is a header.
+    allow_posting: children.length === 0,
     control_account_of: null,
     account_type: assetType,
     children,

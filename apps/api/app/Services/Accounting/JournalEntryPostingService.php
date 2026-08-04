@@ -163,9 +163,17 @@ final class JournalEntryPostingService
     }
 
     /**
-     * Every distinct account a line targets must be active; an inactive account can carry no new posting
-     * (docs/accounting/JOURNAL_ENTRIES.md "# Locking Rules" §4). Reads run RLS-scoped, so an account not
-     * visible in the active company is treated exactly as non-postable.
+     * Every distinct account a line targets must be both ACTIVE and POSTABLE
+     * (docs/accounting/JOURNAL_ENTRIES.md "# Locking Rules" §4, CHART_OF_ACCOUNTS.md).
+     *
+     * The two are different refusals and are reported as such. An inactive account is one the company
+     * has retired — a state that can be undone. A non-postable account is a header whose balance is by
+     * definition the sum of its children; posting to it would create an amount belonging to no leaf and
+     * silently break every roll-up above it. The database keeps `allow_posting` true only while an
+     * account has no children, so this check cannot be satisfied by a stale flag.
+     *
+     * Reads run RLS-scoped, so an account not visible in the active company is treated exactly as
+     * non-postable — it simply is not there.
      *
      * @param  Collection<int, JournalLine>  $lines
      */
@@ -176,15 +184,18 @@ final class JournalEntryPostingService
             $accountIds[$line->account_id] = $line->account_id;
         }
 
-        /** @var array<int, string> $statuses */
-        $statuses = Account::query()
-            ->whereIn('id', $accountIds)
-            ->pluck('status', 'id')
-            ->all();
+        /** @var Collection<int, Account> $accounts */
+        $accounts = Account::query()->whereIn('id', $accountIds)->get()->keyBy('id');
 
         foreach ($accountIds as $accountId) {
-            if (($statuses[$accountId] ?? null) !== Account::STATUS_ACTIVE) {
+            $account = $accounts->get($accountId);
+
+            if ($account === null || $account->status !== Account::STATUS_ACTIVE) {
                 throw PostingRuleException::inactiveAccount($accountId);
+            }
+
+            if (! $account->allow_posting) {
+                throw PostingRuleException::notPostableAccount($accountId);
             }
         }
     }

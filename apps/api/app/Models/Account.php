@@ -28,6 +28,7 @@ use Illuminate\Database\Eloquent\Model;
  * @property string $status
  * @property bool $is_control_account
  * @property string|null $control_account_of
+ * @property bool $allow_posting
  */
 class Account extends Model
 {
@@ -48,6 +49,9 @@ class Account extends Model
     {
         return [
             'is_control_account' => 'boolean',
+            // Whether a journal line may reference this account directly. The database keeps it true
+            // only while the account has no children (S2-11 prerequisite migration).
+            'allow_posting' => 'boolean',
             'deleted_at' => 'datetime',
         ];
     }

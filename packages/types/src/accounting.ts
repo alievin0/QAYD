@@ -56,6 +56,11 @@ export const accountSchema = z.object({
   normal_balance: z.string(),
   status: z.string(),
   is_control_account: z.boolean(),
+  /**
+   * Whether a journal line may reference this account directly. Read it; never derive it — a leaf can
+   * be a header (CHART_OF_ACCOUNTS.md), so "has no children" is not the same question.
+   */
+  allow_posting: z.boolean(),
   control_account_of: z.string().nullable(),
   account_type: accountTypeSchema.nullable(),
 });

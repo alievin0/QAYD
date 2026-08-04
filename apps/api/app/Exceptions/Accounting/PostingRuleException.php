@@ -79,4 +79,21 @@ final class PostingRuleException extends DomainException
             ['account_id' => $accountId],
         );
     }
+
+    /**
+     * A line targets a HEADER account (`allow_posting = false`). Distinct from an inactive account: an
+     * inactive one has been retired and could be reactivated, while a header's balance is by definition
+     * the sum of its children, so an amount posted directly to it would belong to no leaf and quietly
+     * break every roll-up above it (422).
+     */
+    public static function notPostableAccount(int $accountId): self
+    {
+        return new self(
+            'ACCOUNT_NOT_POSTABLE',
+            422,
+            'A journal line targets a header account; only postable accounts can receive journal lines.',
+            'lines',
+            ['account_id' => $accountId],
+        );
+    }
 }
