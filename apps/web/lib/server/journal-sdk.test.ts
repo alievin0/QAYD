@@ -19,13 +19,15 @@ interface Capture {
 }
 
 function clientWithCapture(captured: Capture[]) {
-  const fetchStub = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-    captured.push({ url: String(url), init: init ?? {} });
-    return new Response(JSON.stringify({ success: true, data: null }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
-  });
+  const fetchStub = vi.fn(
+    async (url: string | URL | Request, init?: RequestInit) => {
+      captured.push({ url: String(url), init: init ?? {} });
+      return new Response(JSON.stringify({ success: true, data: null }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  );
 
   return createClient({
     baseUrl: "https://api.test/api/v1",

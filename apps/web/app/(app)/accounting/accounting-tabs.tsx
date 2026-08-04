@@ -15,7 +15,7 @@ import { useI18n } from "../../../lib/i18n/locale-provider";
  */
 const TABS = [
   { key: "accounts", href: "/accounting/accounts", ready: true },
-  { key: "journal", href: "/accounting/journal", ready: false },
+  { key: "journal", href: "/accounting/journal", ready: true },
   { key: "ledger", href: "/accounting/ledger", ready: false },
   { key: "trialBalance", href: "/accounting/trial-balance", ready: false },
 ] as const;
