@@ -71,6 +71,7 @@ export {
   type AccountTreeNode,
   type AccountTreeResult,
   type AccountType,
+  type AccountTypeListResult,
   type CreateAccountInput,
   type ReclassifyAccountInput,
   type UpdateAccountInput,

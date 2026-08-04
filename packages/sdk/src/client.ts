@@ -3,6 +3,7 @@ import type {
   AccountListResult,
   AccountResult,
   AccountTreeResult,
+  AccountTypeListResult,
   AuthMe,
   CreateAccountInput,
   CreateCompanyInput,
@@ -228,6 +229,15 @@ export class QaydClient {
   }
 
   // — Accounting: chart of accounts (`/api/v1/accounting/accounts`) —
+
+  /**
+   * `GET /accounting/account-types` — the seven global classifications (needs accounting.journal.read).
+   * Read-only; the ids are database-generated, so a client that has to send `account_type_id` reads them
+   * from here rather than hard-coding them.
+   */
+  accountTypes(companyId?: string): Promise<Envelope<AccountTypeListResult>> {
+    return this.request<AccountTypeListResult>({ method: "GET", path: "/accounting/account-types", companyId });
+  }
 
   /** `GET /accounting/accounts` — the flat chart, ordered by code (needs accounting.journal.read). */
   listAccounts(companyId?: string): Promise<Envelope<AccountListResult>> {

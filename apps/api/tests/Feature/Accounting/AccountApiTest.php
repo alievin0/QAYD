@@ -228,3 +228,58 @@ it('deactivates an account', function (): void {
         ->assertOk()
         ->assertJsonPath('data.account.status', 'inactive');
 });
+
+// ---------------------------------------------------------------- account-type catalogue (S2-10)
+
+it('lists the seven global account types in presentation order', function (): void {
+    $m = apiMember(['accounting.journal.read']);
+
+    $response = $this->actingAs($m['user'], 'web')
+        ->getJson('/api/v1/accounting/account-types', ['X-Company-Id' => $m['uuid']])
+        ->assertOk()
+        ->assertJsonPath('success', true)
+        ->assertJsonCount(7, 'data.account_types');
+
+    // The shape is exactly the one already embedded as account.account_type, so a client has one
+    // notion of an account type rather than two that can drift.
+    $response->assertJsonStructure([
+        'data' => [
+            'account_types' => [
+                ['id', 'key', 'name_en', 'name_ar', 'normal_balance', 'is_balance_sheet'],
+            ],
+        ],
+    ]);
+
+    $keys = $response->json('data.account_types.*.key');
+    expect($keys)->toContain('asset', 'liability', 'equity', 'revenue', 'expense');
+});
+
+it('denies the account-type catalogue without accounting.journal.read (403)', function (): void {
+    $m = apiMember([]);
+
+    $this->actingAs($m['user'], 'web')
+        ->getJson('/api/v1/accounting/account-types', ['X-Company-Id' => $m['uuid']])
+        ->assertStatus(403)
+        ->assertJsonPath('errors.0.code', 'INSUFFICIENT_PERMISSION');
+});
+
+it('requires authentication for the account-type catalogue', function (): void {
+    $this->getJson('/api/v1/accounting/account-types', ['X-Company-Id' => 'anything'])
+        ->assertStatus(401);
+});
+
+it('serves the same global catalogue to every company', function (): void {
+    $first = apiMember(['accounting.journal.read'], 'Cat A');
+    $second = apiMember(['accounting.journal.read'], 'Cat B');
+
+    $a = $this->actingAs($first['user'], 'web')
+        ->getJson('/api/v1/accounting/account-types', ['X-Company-Id' => $first['uuid']])
+        ->assertOk()->json('data.account_types');
+
+    $b = $this->actingAs($second['user'], 'web')
+        ->getJson('/api/v1/accounting/account-types', ['X-Company-Id' => $second['uuid']])
+        ->assertOk()->json('data.account_types');
+
+    // A shared catalogue, not tenant data: identical for both, and nothing here is company-specific.
+    expect($a)->toBe($b);
+});

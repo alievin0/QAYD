@@ -64,6 +64,17 @@ export type Account = z.infer<typeof accountSchema>;
 /** An account node in the tree read — the account plus its nested children (recursive). */
 export type AccountTreeNode = Account & { children: AccountTreeNode[] };
 
+/**
+ * `data` of `GET /accounting/account-types` — the seven global classifications, in presentation order.
+ *
+ * Read-only: there is no create/update counterpart, because the catalogue is shared by every tenant and
+ * the runtime database role has no write grant on it. The New Account dialog needs it because
+ * `account_type_id` is required and its ids are database-generated, so they cannot be hard-coded.
+ */
+export interface AccountTypeListResult {
+  account_types: AccountType[];
+}
+
 /** `data` of `GET /accounting/accounts`. */
 export interface AccountListResult {
   accounts: Account[];

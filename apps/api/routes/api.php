@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Accounting\AccountController;
+use App\Http\Controllers\Accounting\AccountTypeController;
 use App\Http\Controllers\Accounting\LedgerController;
 use App\Http\Controllers\Accounting\TrialBalanceController;
 use App\Http\Controllers\Identity\CreateCompanyController;
@@ -71,6 +72,11 @@ Route::prefix('v1/accounting')
     ->middleware([...$stateful, 'auth:web,jwt', 'tenant'])
     ->group(function (): void {
         Route::middleware('permission:accounting.journal.read')->group(function (): void {
+            // The global account-type catalogue. Read-only at the database grant level (S2-01 revoked
+            // writes on it from the runtime role), and needed before an account can be created at all —
+            // `account_type_id` is required and its ids are database-generated.
+            Route::get('account-types', [AccountTypeController::class, 'index']);
+
             Route::get('accounts', [AccountController::class, 'index']);
             Route::get('accounts/tree', [AccountController::class, 'tree']);
             Route::get('accounts/{account}', [AccountController::class, 'show'])->whereNumber('account');
