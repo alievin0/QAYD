@@ -4,6 +4,12 @@ import type {
   AccountResult,
   AccountTreeResult,
   AccountTypeListResult,
+  CreateJournalEntryInput,
+  JournalEntryListResult,
+  JournalEntryResult,
+  ReverseJournalEntryInput,
+  SubmitJournalEntryInput,
+  UpdateJournalEntryInput,
   AuthMe,
   CreateAccountInput,
   CreateCompanyInput,
@@ -53,6 +59,11 @@ interface RequestConfig {
   query?: Record<string, string | number | undefined>;
   /** Per-call company override; falls back to the client's `companyId`. */
   companyId?: string;
+  /**
+   * Per-call headers, merged last so they win. Used for `Idempotency-Key`, which is meaningful only on
+   * the individual money-moving call rather than on the client as a whole.
+   */
+  headers?: Record<string, string>;
 }
 
 function defaultRequestId(): string {
@@ -129,6 +140,9 @@ export class QaydClient {
 
     const token = this.resolveToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    // Last, so a per-call header (Idempotency-Key) wins over the client defaults.
+    Object.assign(headers, config.headers ?? {});
 
     let response: Response;
     try {
@@ -226,6 +240,116 @@ export class QaydClient {
   /** `POST /companies` — an email-verified user with zero companies creates one and becomes its Owner. */
   createCompany(input: CreateCompanyInput): Promise<Envelope<CreateCompanyResult>> {
     return this.request<CreateCompanyResult>({ method: "POST", path: "/companies", body: input });
+  }
+
+  // — Accounting: journal entries (`/api/v1/accounting/journal-entries`) —
+
+  /** `GET /accounting/journal-entries` — the company's entries, newest first (accounting.journal.read). */
+  listJournalEntries(
+    query?: { page?: number; per_page?: number; status?: string },
+    companyId?: string,
+  ): Promise<Envelope<JournalEntryListResult>> {
+    return this.request<JournalEntryListResult>({
+      method: "GET",
+      path: "/accounting/journal-entries",
+      query,
+      companyId,
+    });
+  }
+
+  /** `GET /accounting/journal-entries/{id}` — one entry with its lines; cross-tenant id → 404. */
+  journalEntry(id: number, companyId?: string): Promise<Envelope<JournalEntryResult>> {
+    return this.request<JournalEntryResult>({
+      method: "GET",
+      path: `/accounting/journal-entries/${id}`,
+      companyId,
+    });
+  }
+
+  /** `POST /accounting/journal-entries` — create a DRAFT (accounting.create). Never posts. */
+  createJournalEntry(
+    input: CreateJournalEntryInput,
+    companyId?: string,
+  ): Promise<Envelope<JournalEntryResult>> {
+    return this.request<JournalEntryResult>({
+      method: "POST",
+      path: "/accounting/journal-entries",
+      body: input,
+      companyId,
+    });
+  }
+
+  /** `PATCH /accounting/journal-entries/{id}` — edit a draft; `version` guards it (accounting.update). */
+  updateJournalEntry(
+    id: number,
+    input: UpdateJournalEntryInput,
+    companyId?: string,
+  ): Promise<Envelope<JournalEntryResult>> {
+    return this.request<JournalEntryResult>({
+      method: "PATCH",
+      path: `/accounting/journal-entries/${id}`,
+      body: input,
+      companyId,
+    });
+  }
+
+  /** `POST /accounting/journal-entries/{id}/submit` — hand a draft to approval (accounting.update). */
+  submitJournalEntry(
+    id: number,
+    input: SubmitJournalEntryInput,
+    companyId?: string,
+  ): Promise<Envelope<JournalEntryResult>> {
+    return this.request<JournalEntryResult>({
+      method: "POST",
+      path: `/accounting/journal-entries/${id}/submit`,
+      body: input,
+      companyId,
+    });
+  }
+
+  /**
+   * `POST /accounting/journal-entries/{id}/post` — the call that moves the ledger (accounting.approve).
+   *
+   * `idempotencyKey` is a separate argument rather than part of a body because it is not data about the
+   * entry: it identifies the ATTEMPT. Send the same key on every retry of one logical post and the
+   * server runs it at most once, replaying the original response instead of posting twice.
+   */
+  postJournalEntry(
+    id: number,
+    idempotencyKey?: string,
+    companyId?: string,
+  ): Promise<Envelope<JournalEntryResult>> {
+    return this.request<JournalEntryResult>({
+      method: "POST",
+      path: `/accounting/journal-entries/${id}/post`,
+      body: {},
+      companyId,
+      headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+    });
+  }
+
+  /** `POST /accounting/journal-entries/{id}/reverse` — a NEW mirror entry (accounting.approve). */
+  reverseJournalEntry(
+    id: number,
+    input: ReverseJournalEntryInput,
+    companyId?: string,
+  ): Promise<Envelope<JournalEntryResult>> {
+    return this.request<JournalEntryResult>({
+      method: "POST",
+      path: `/accounting/journal-entries/${id}/reverse`,
+      body: input,
+      companyId,
+    });
+  }
+
+  /** `POST /accounting/journal-entries/{id}/void` — discard an unposted entry (accounting.update). */
+  voidJournalEntry(id: number, companyId?: string): Promise<Envelope<JournalEntryResult>> {
+    return this.request<JournalEntryResult>({
+      method: "POST",
+      path: `/accounting/journal-entries/${id}/void`,
+      body: {},
+      companyId,
+    });
   }
 
   // — Accounting: chart of accounts (`/api/v1/accounting/accounts`) —

@@ -94,3 +94,106 @@ export interface AccountTreeResult {
 export interface AccountResult {
   account: Account;
 }
+
+// — Journal entries —
+
+/**
+ * One line of a journal-entry request body.
+ *
+ * Money is a STRING throughout — `"40.0000"`, never `40.0` — because a float cannot carry
+ * `NUMERIC(19,4)` faithfully, and a rounding error in a ledger is not a display bug. Which side an
+ * amount belongs on, and whether the entry balances, are the server's to decide.
+ */
+export const journalLineInputSchema = z.object({
+  account_id: z.number().int(),
+  debit: z.string(),
+  credit: z.string(),
+  description: z.string().nullable().optional(),
+});
+export type JournalLineInput = z.infer<typeof journalLineInputSchema>;
+
+/** `POST /accounting/journal-entries` body. Always creates a DRAFT; posting is a separate call. */
+export const createJournalEntryInputSchema = z.object({
+  journal_date: z.string(),
+  entry_type: z.string(),
+  currency_code: z.string().length(3),
+  exchange_rate: z.string().optional(),
+  reference: z.string().nullable().optional(),
+  memo: z.string().nullable().optional(),
+  lines: z.array(journalLineInputSchema).min(1),
+});
+export type CreateJournalEntryInput = z.infer<typeof createJournalEntryInputSchema>;
+
+/**
+ * `PATCH /accounting/journal-entries/{id}` body. `version` is required, not optional: it is the
+ * optimistic-concurrency token, and a caller who could omit it would be opting out of the protection
+ * that stops one editor silently overwriting another.
+ */
+export const updateJournalEntryInputSchema = createJournalEntryInputSchema.extend({
+  version: z.number().int().min(1),
+});
+export type UpdateJournalEntryInput = z.infer<typeof updateJournalEntryInputSchema>;
+
+/** `POST /accounting/journal-entries/{id}/submit` body. */
+export const submitJournalEntryInputSchema = z.object({
+  version: z.number().int().min(1),
+});
+export type SubmitJournalEntryInput = z.infer<typeof submitJournalEntryInputSchema>;
+
+/** `POST /accounting/journal-entries/{id}/reverse` body — a reversal must say why. */
+export const reverseJournalEntryInputSchema = z.object({
+  reason: z.string().min(1),
+  reversal_date: z.string().nullable().optional(),
+});
+export type ReverseJournalEntryInput = z.infer<typeof reverseJournalEntryInputSchema>;
+
+/** A persisted journal line as the API returns it. */
+export const journalLineSchema = z.object({
+  id: z.number().int(),
+  line_number: z.number().int(),
+  account_id: z.number().int(),
+  debit: z.string(),
+  credit: z.string(),
+  base_debit: z.string(),
+  base_credit: z.string(),
+  currency_code: z.string(),
+  description: z.string().nullable(),
+});
+export type JournalLine = z.infer<typeof journalLineSchema>;
+
+/**
+ * A journal entry header. `lines` is present on every single-entry response and absent from the list,
+ * which is why it is optional rather than defaulted — an empty array would claim the entry has no
+ * lines, which is a different statement from "this response did not include them".
+ */
+export const journalEntrySchema = z.object({
+  id: z.number().int(),
+  journal_number: z.string(),
+  journal_date: z.string(),
+  entry_type: z.string(),
+  status: z.string(),
+  currency_code: z.string(),
+  exchange_rate: z.string(),
+  total_debit: z.string(),
+  total_credit: z.string(),
+  base_total_debit: z.string(),
+  base_total_credit: z.string(),
+  version: z.number().int(),
+  is_reversal: z.boolean(),
+  reversed_entry_id: z.number().int().nullable(),
+  reversal_entry_id: z.number().int().nullable(),
+  reference: z.string().nullable(),
+  memo: z.string().nullable(),
+  lines: z.array(journalLineSchema).optional(),
+});
+export type JournalEntry = z.infer<typeof journalEntrySchema>;
+
+/** `data` of `GET /accounting/journal-entries`. */
+export interface JournalEntryListResult {
+  journal_entries: JournalEntry[];
+}
+
+/** `data` of every single-entry journal response (show / create / update / submit / post / …). */
+export interface JournalEntryResult {
+  journal_entry: JournalEntry;
+}

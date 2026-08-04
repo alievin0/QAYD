@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Accounting\AccountController;
 use App\Http\Controllers\Accounting\AccountTypeController;
+use App\Http\Controllers\Accounting\JournalEntryController;
 use App\Http\Controllers\Accounting\LedgerController;
 use App\Http\Controllers\Accounting\TrialBalanceController;
 use App\Http\Controllers\Identity\CreateCompanyController;
@@ -91,6 +92,34 @@ Route::prefix('v1/accounting')
         // S2-09 — trial balance. Reading a trial balance, generating a durable snapshot, and signing
         // one are three different levels of authority over the same figures, so they take three
         // permissions rather than sharing the generic accounting read.
+        // Journal entries (S2-11 prerequisite) — the HTTP surface over the S2-04/05/06 Actions. The
+        // permission split follows who does the work: read to look, create to draft, update to edit /
+        // submit / discard, approve for the two actions that move the ledger.
+        Route::middleware('permission:accounting.journal.read')->group(function (): void {
+            Route::get('journal-entries', [JournalEntryController::class, 'index']);
+            Route::get('journal-entries/{entry}', [JournalEntryController::class, 'show'])->whereNumber('entry');
+        });
+
+        Route::middleware('permission:accounting.create')->group(function (): void {
+            Route::post('journal-entries', [JournalEntryController::class, 'store']);
+        });
+
+        Route::middleware('permission:accounting.update')->group(function (): void {
+            Route::patch('journal-entries/{entry}', [JournalEntryController::class, 'update'])->whereNumber('entry');
+            Route::post('journal-entries/{entry}/submit', [JournalEntryController::class, 'submit'])->whereNumber('entry');
+            Route::post('journal-entries/{entry}/void', [JournalEntryController::class, 'void'])->whereNumber('entry');
+        });
+
+        Route::middleware('permission:accounting.approve')->group(function (): void {
+            // `idempotent` is on THIS route and no other: posting is the only call here that moves the
+            // ledger, so it is the only one where a retry must not repeat the work.
+            Route::post('journal-entries/{entry}/post', [JournalEntryController::class, 'post'])
+                ->middleware('idempotent')
+                ->whereNumber('entry');
+
+            Route::post('journal-entries/{entry}/reverse', [JournalEntryController::class, 'reverse'])->whereNumber('entry');
+        });
+
         Route::middleware('permission:accounting.trial_balance.read')->group(function (): void {
             Route::get('reports/trial-balance', [TrialBalanceController::class, 'compute']);
             Route::get('reports/trial-balance/{snapshot}', [TrialBalanceController::class, 'show'])
