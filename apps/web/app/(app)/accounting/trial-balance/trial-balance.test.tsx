@@ -109,7 +109,7 @@ function snapshot(
     period_start_date: "2026-01-01",
     as_of_date: "2026-01-31",
     type: "unadjusted",
-    status: "draft",
+    status: "generated",
     version: 1,
     is_current: true,
     parent_snapshot_id: null,
@@ -304,7 +304,7 @@ describe("snapshots", () => {
     });
 
     expect(screen.getByText("Version 1")).toBeDefined();
-    expect(screen.getByText("Draft")).toBeDefined();
+    expect(screen.getByText("Generated")).toBeDefined();
     expect(screen.getByText("Snapshot created.")).toBeDefined();
   });
 
@@ -332,8 +332,44 @@ describe("snapshots", () => {
     await waitFor(() =>
       expect(screen.queryByText(/handed to the reports queue/)).toBeNull(),
     );
-    expect(screen.getByText("Draft")).toBeDefined();
+    expect(screen.getByText("Generated")).toBeDefined();
   });
+
+  // Every status App\Models\TrialBalanceSnapshot can hold. A missing entry renders as its own dotted
+  // key, which is how the original map — guessed rather than read — was caught showing
+  // "accounting.trialBalance.snapshot.statuses.generated" to the user.
+  it.each([
+    "generating",
+    "generated",
+    "validated",
+    "out_of_balance",
+    "under_review",
+    "approved",
+    "archived",
+  ])(
+    "translates the %s status rather than printing its key",
+    async (status) => {
+      stubFetch([
+        {
+          status: 201,
+          body: {
+            success: true,
+            data: { snapshot: snapshot({ status }), queued: false },
+          },
+        },
+      ]);
+
+      renderScreen();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Generate snapshot" }),
+      );
+
+      await waitFor(() =>
+        expect(screen.getByText("Snapshot #9")).toBeDefined(),
+      );
+      expect(screen.queryByText(/accounting\.trialBalance/)).toBeNull();
+    },
+  );
 
   it("keeps the live view and the frozen artifact visibly distinct", async () => {
     stubFetch([

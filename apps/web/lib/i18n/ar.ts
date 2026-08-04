@@ -378,10 +378,12 @@ export const ar: Dictionary = {
         variance: "الفرق",
         statuses: {
           generating: "قيد الإنشاء",
-          draft: "مسودة",
+          generated: "تم إنشاؤها",
+          validated: "تم التحقق منها",
+          out_of_balance: "غير متوازنة",
+          under_review: "قيد المراجعة",
           approved: "معتمدة",
-          superseded: "مستبدَلة",
-          failed: "فشلت",
+          archived: "مؤرشفة",
         },
         queued:
           "أُحيلت هذه العملية إلى طابور التقارير. ستظهر الأرقام فور انتهائها.",

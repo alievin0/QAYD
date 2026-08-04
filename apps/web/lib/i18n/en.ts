@@ -384,12 +384,16 @@ export const en = {
         totalDebit: "Total debit",
         totalCredit: "Total credit",
         variance: "Variance",
+        // The seven states in App\Models\TrialBalanceSnapshot. Every one is translated: a status the
+        // map is missing renders as its own key, which is how this list was found to be wrong.
         statuses: {
           generating: "Generating",
-          draft: "Draft",
+          generated: "Generated",
+          validated: "Validated",
+          out_of_balance: "Out of balance",
+          under_review: "Under review",
           approved: "Approved",
-          superseded: "Superseded",
-          failed: "Failed",
+          archived: "Archived",
         },
         queued:
           "This run was handed to the reports queue. The figures appear once it finishes.",
