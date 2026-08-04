@@ -120,4 +120,16 @@ Route::prefix('v1/accounting')
 if (app()->environment(['local', 'testing'])) {
     Route::middleware([...$stateful, 'auth:web,jwt', 'tenant', 'permission:reports.read'])
         ->get('/v1/_probe/guarded', fn () => ApiResponse::success(['ok' => true], 'probe.guarded'));
+
+    // S2-11 prerequisite: exercises the `idempotent` middleware end to end. The handler returns a fresh
+    // random value each time it runs, so a response that repeats a previous value proves the handler was
+    // NOT re-entered — which is the property the middleware exists to provide, and one a fixed payload
+    // could not distinguish from a coincidence.
+    Route::middleware([...$stateful, 'auth:web,jwt', 'tenant', 'idempotent'])
+        ->post('/v1/_probe/idempotent', fn () => ApiResponse::success(
+            ['token' => bin2hex(random_bytes(8))],
+            'probe.idempotent',
+            [],
+            201,
+        ));
 }

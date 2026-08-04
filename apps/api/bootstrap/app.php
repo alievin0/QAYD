@@ -4,6 +4,7 @@ use App\Exceptions\ApiExceptionRenderer;
 use App\Http\Middleware\ApiEnvelope;
 use App\Http\Middleware\AssignRequestId;
 use App\Http\Middleware\EnsureEmailVerified;
+use App\Http\Middleware\EnsureIdempotency;
 use App\Http\Middleware\EnsurePermission;
 use App\Http\Middleware\ResolveTenantCompany;
 use Illuminate\Foundation\Application;
@@ -30,6 +31,10 @@ return Application::configure(basePath: dirname(__DIR__))
             // set for the active company (deny-by-default → 403 INSUFFICIENT_PERMISSION). Applied AFTER
             // the `tenant` middleware, which pins the active company.
             'permission' => EnsurePermission::class,
+            // S2-11 prerequisite: `Idempotency-Key` replay/conflict handling for money-moving POSTs.
+            // Applied AFTER `tenant`, since a key is scoped to the active company. Opt-in per route —
+            // rolling it out across every money-moving endpoint is S2-13's job, not this alias's.
+            'idempotent' => EnsureIdempotency::class,
         ]);
 
         // S1-16 cross-cutting foundations, front of the `api` group so they wrap every /api response:
