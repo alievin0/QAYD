@@ -7,8 +7,8 @@ import { cn } from "@qayd/ui";
 import { useI18n } from "../../../lib/i18n/locale-provider";
 
 /**
- * The accounting sub-nav (S2-10). Only the chart of accounts is a real route today; the rest are
- * announced but not linked, because a tab that navigates to a 404 is worse than one that says "soon".
+ * The accounting sub-nav (S2-10). A tab is linked only once its route exists; the rest are announced
+ * but inert, because a tab that navigates to a 404 is worse than one that says "soon".
  *
  * RTL needs nothing special: the tabs are a flex row, so they reverse with the document, and the active
  * marker is a bottom border rather than a directional inset.
@@ -17,7 +17,7 @@ const TABS = [
   { key: "accounts", href: "/accounting/accounts", ready: true },
   { key: "journal", href: "/accounting/journal", ready: true },
   { key: "ledger", href: "/accounting/ledger", ready: false },
-  { key: "trialBalance", href: "/accounting/trial-balance", ready: false },
+  { key: "trialBalance", href: "/accounting/trial-balance", ready: true },
 ] as const;
 
 export function AccountingTabs() {

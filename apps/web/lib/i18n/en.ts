@@ -327,6 +327,80 @@ export const en = {
       },
       unexpectedError: "Something went wrong. Please try again.",
     },
+    trialBalance: {
+      title: "Trial balance",
+      subtitle:
+        "Every account with a balance in the selected period, and the proof that the two sides agree.",
+      period: {
+        label: "Period",
+        placeholder: "Select a period",
+        status: {
+          future: "Future",
+          open: "Open",
+          closed: "Closed",
+          locked: "Locked",
+        },
+      },
+      asOf: "As of {date}",
+      loading: "Computing the trial balance…",
+      groups: {
+        opening: "Opening",
+        movement: "Movement",
+        closing: "Closing",
+      },
+      columns: {
+        code: "Code",
+        account: "Account",
+        debit: "Debit",
+        credit: "Credit",
+      },
+      caption: "Trial balance by account",
+      total: "Total",
+      abnormal: "Abnormal",
+      abnormalHint:
+        "This account carries a balance on the opposite side from its normal one.",
+      balanced: "Debits equal credits.",
+      outOfBalance: "Out of balance by {variance}.",
+      serverVerdict:
+        "Balanced or not is the server's verdict, computed against this company's rounding tolerance.",
+      empty: {
+        title: "No fiscal periods yet",
+        body: "A trial balance is computed for a period, and this company has none. Periods are created with the fiscal year.",
+      },
+      noActivity: {
+        title: "Nothing posted in this period",
+        body: "No account carries a balance yet. Post a journal entry, then compute again.",
+      },
+      loadFailed:
+        "The trial balance could not be loaded. Select a period or refresh to try again.",
+      snapshot: {
+        generate: "Generate snapshot",
+        generating: "Generating…",
+        title: "Snapshot #{id}",
+        version: "Version {version}",
+        type: "Type",
+        status: "Status",
+        accountCount: "{count} accounts",
+        totalDebit: "Total debit",
+        totalCredit: "Total credit",
+        variance: "Variance",
+        statuses: {
+          generating: "Generating",
+          draft: "Draft",
+          approved: "Approved",
+          superseded: "Superseded",
+          failed: "Failed",
+        },
+        queued:
+          "This run was handed to the reports queue. The figures appear once it finishes.",
+        refresh: "Refresh",
+        refreshing: "Refreshing…",
+        created: "Snapshot created.",
+        explainer:
+          "A snapshot freezes these figures so they can be signed. The live view above always reflects the ledger as it stands now.",
+      },
+      unexpectedError: "Something went wrong. Please try again.",
+    },
   },
 };
 
