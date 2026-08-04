@@ -8,12 +8,12 @@ reading dozens of documents.
 
 | Field | Value |
 |---|---|
-| **Status** | **Sprint 2 (Accounting core) IN PROGRESS** — **S2-01 → S2-07 COMPLETE & CLOSED** (tags `s2-01-complete` … `s2-07-complete`). Base `v0.1.0`. |
+| **Status** | **Sprint 2 (Accounting core) IN PROGRESS** — **S2-01 → S2-08 COMPLETE & CLOSED** (tags `s2-01-complete` … `s2-08-complete`). Base `v0.1.0`. |
 | **Documentation** | Frozen (`architecture-freeze-v1`); one build decision since: [ADR-0010](docs/architecture/adr/0010-auth-service-authoritative-for-identity-schema.md). The Phase 1–3 research corpus (`docs/research/`, `docs/architecture/knowledge/`) is **frozen reference material** — it governs nothing and never overrides an ADR. |
-| **Phase** | Build — Sprint 2 (Accounting core): S2-01 (`accounts` schema) + S2-02 (COA API) + S2-03 (journal schema + immutability triggers) + S2-04 (journal draft lifecycle: models/DTOs/actions, optimistic concurrency) + S2-05 (posting engine: `PostingService`, fiscal-calendar seam, `ledger_entries` projection, permanent numbering) + S2-06 (reverse & void: mirror entry + two-way linkage, one-reversal DB guard, segregation of duties) + S2-07 (fiscal periods: month-level calendar, close/lock/reopen, period-backed posting gate) done |
-| **Current Sprint** | **Sprint 2 (Accounting core)** — S2-01 → S2-07 complete (**7 of 14 stories closed · 39 of 47 committed points**); next: S2-08 (General ledger reads) |
+| **Phase** | Build — Sprint 2 (Accounting core): S2-01 (`accounts` schema) + S2-02 (COA API) + S2-03 (journal schema + immutability triggers) + S2-04 (journal draft lifecycle: models/DTOs/actions, optimistic concurrency) + S2-05 (posting engine: `PostingService`, fiscal-calendar seam, `ledger_entries` projection, permanent numbering) + S2-06 (reverse & void: mirror entry + two-way linkage, one-reversal DB guard, segregation of duties) + S2-07 (fiscal periods: month-level calendar, close/lock/reopen, period-backed posting gate) + S2-08 (general ledger reads: account activity with a running balance, cursor-paginated) done |
+| **Current Sprint** | **Sprint 2 (Accounting core)** — S2-01 → S2-08 complete (**8 of 14 stories closed · 42 of 47 committed points**); next: S2-09 (Trial balance + snapshot) |
 | **Current Version** | v0.1.0 |
-| **Next Milestone** | S2-08 — General ledger reads (`LedgerQueryService` over `ledger_entries`: account activity with a running balance from `signed_base_amount`, RLS-scoped, paginated); + deferred: ledger-backed guard (TD-11, unblocked), `SetOpeningBalanceAction` (TD-10, unblocked), fiscal-year lifecycle + year↔period status coupling (TD-20/TD-21), the INSERT-into-posted / header-immutability ADRs |
+| **Next Milestone** | S2-09 — Trial balance + snapshot (every account's period debit/credit totals from `ledger_entries`, proven to net to zero; `GET /accounting/reports/trial-balance`); + deferred: ledger-backed guard (TD-11, unblocked), `SetOpeningBalanceAction` (TD-10, unblocked), fiscal-year lifecycle + year↔period status coupling (TD-20/TD-21), the INSERT-into-posted / header-immutability ADRs |
 | **Architecture Owner** | Ali S — Founder |
 | **Governing Stack** | [docs/architecture/FINAL_TECH_STACK.md](docs/architecture/FINAL_TECH_STACK.md) (Option A · Locked) |
 | **Last Updated** | 2026-08-04 |
