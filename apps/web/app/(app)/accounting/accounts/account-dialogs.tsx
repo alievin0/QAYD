@@ -198,7 +198,9 @@ export function NewAccountDialog({
                     value={String(row.account.id)}
                   >
                     {row.account.code} ·{" "}
-                    {locale === "ar" ? row.account.name_ar : row.account.name_en}
+                    {locale === "ar"
+                      ? row.account.name_ar
+                      : row.account.name_en}
                   </SelectItem>
                 ))}
               </SelectContent>

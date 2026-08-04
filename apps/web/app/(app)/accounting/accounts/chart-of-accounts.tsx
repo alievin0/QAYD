@@ -59,7 +59,10 @@ export function ChartOfAccounts({
   const [reclassifying, setReclassifying] = useState<Account | null>(null);
   const [deactivating, setDeactivating] = useState<Account | null>(null);
 
-  const filtered = useMemo(() => filterTree(accounts, query), [accounts, query]);
+  const filtered = useMemo(
+    () => filterTree(accounts, query),
+    [accounts, query],
+  );
 
   // A search shows what it found: collapsing matches back out of view would defeat the search.
   const rows: AccountRow[] = useMemo(
