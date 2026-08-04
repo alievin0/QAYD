@@ -42,9 +42,24 @@ export {
   SelectValue,
 } from "./components/select.js";
 export {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogOverlay,
+  DialogPortal,
+  DialogTitle,
+  DialogTrigger,
+  type DialogContentProps,
+} from "./components/dialog.js";
+export {
   CheckIcon,
   ChevronDownIcon,
+  ChevronRightIcon,
   ChevronUpIcon,
+  CloseIcon,
   MoonIcon,
   SunIcon,
 } from "./components/icons.js";

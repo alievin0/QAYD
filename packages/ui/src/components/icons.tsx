@@ -59,3 +59,24 @@ export function ChevronUpIcon(props: IconProps) {
     </svg>
   );
 }
+
+/**
+ * The collapsed-node affordance. It points INTO the page, so in RTL it must be mirrored by the caller
+ * (`rtl:rotate-180`) rather than swapped for a left-pointing glyph — direction is a layout concern, not
+ * a different icon.
+ */
+export function ChevronRightIcon(props: IconProps) {
+  return (
+    <svg {...base} aria-hidden="true" {...props}>
+      <path d="m9 18 6-6-6-6" />
+    </svg>
+  );
+}
+
+export function CloseIcon(props: IconProps) {
+  return (
+    <svg {...base} aria-hidden="true" {...props}>
+      <path d="M18 6 6 18M6 6l12 12" />
+    </svg>
+  );
+}
