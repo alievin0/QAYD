@@ -95,6 +95,32 @@ export interface AccountResult {
   account: Account;
 }
 
+// — Fiscal periods (read-only) —
+
+/**
+ * One month of the accounting calendar, as the read endpoint returns it.
+ *
+ * Exactly the fields a period selector needs. A period's close history — who closed or reopened it and
+ * when — is deliberately not part of this shape: the trial-balance screen picks a period, it does not
+ * audit one. `status` is `future | open | closed | locked`, and a client should render it rather than
+ * reason about it; what a status permits is the server's to decide.
+ */
+export const fiscalPeriodSchema = z.object({
+  id: z.number().int(),
+  fiscal_year_id: z.number().int(),
+  period_number: z.number().int(),
+  name: z.string(),
+  start_date: z.string(),
+  end_date: z.string(),
+  status: z.string(),
+});
+export type FiscalPeriod = z.infer<typeof fiscalPeriodSchema>;
+
+/** `data` of `GET /accounting/fiscal-periods`, grouped by fiscal year and ordered within each. */
+export interface FiscalPeriodListResult {
+  fiscal_periods: FiscalPeriod[];
+}
+
 // — Journal entries —
 
 /**

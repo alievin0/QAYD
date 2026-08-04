@@ -163,8 +163,12 @@ describe("grid and running balance", () => {
   it("shows the running total and flags an imbalance as the user types", async () => {
     renderEditor();
 
-    fireEvent.change(screen.getByLabelText(/Debit — Line 1/), { target: { value: "100" } });
-    fireEvent.change(screen.getByLabelText(/Credit — Line 2/), { target: { value: "90" } });
+    fireEvent.change(screen.getByLabelText(/Debit — Line 1/), {
+      target: { value: "100" },
+    });
+    fireEvent.change(screen.getByLabelText(/Credit — Line 2/), {
+      target: { value: "90" },
+    });
 
     expect(screen.getByText("100.0000")).toBeDefined();
     expect(screen.getByText(/Out of balance by 10.0000/)).toBeDefined();
@@ -173,8 +177,12 @@ describe("grid and running balance", () => {
   it("reports a balanced entry once both sides agree", async () => {
     renderEditor();
 
-    fireEvent.change(screen.getByLabelText(/Debit — Line 1/), { target: { value: "100" } });
-    fireEvent.change(screen.getByLabelText(/Credit — Line 2/), { target: { value: "100" } });
+    fireEvent.change(screen.getByLabelText(/Debit — Line 1/), {
+      target: { value: "100" },
+    });
+    fireEvent.change(screen.getByLabelText(/Credit — Line 2/), {
+      target: { value: "100" },
+    });
 
     expect(screen.getByText("Balanced")).toBeDefined();
   });
@@ -203,7 +211,9 @@ describe("post gating", () => {
   it("keeps Post disabled while the entry is unbalanced", async () => {
     renderEditor(entry({ lines: [] }));
 
-    fireEvent.change(screen.getByLabelText(/Debit — Line 1/), { target: { value: "100" } });
+    fireEvent.change(screen.getByLabelText(/Debit — Line 1/), {
+      target: { value: "100" },
+    });
 
     expect(screen.getByRole("button", { name: "Post" })).toBeDisabled();
   });
@@ -211,8 +221,12 @@ describe("post gating", () => {
   it("keeps Post disabled on a never-saved entry, balanced or not", async () => {
     renderEditor();
 
-    fireEvent.change(screen.getByLabelText(/Debit — Line 1/), { target: { value: "100" } });
-    fireEvent.change(screen.getByLabelText(/Credit — Line 2/), { target: { value: "100" } });
+    fireEvent.change(screen.getByLabelText(/Debit — Line 1/), {
+      target: { value: "100" },
+    });
+    fireEvent.change(screen.getByLabelText(/Credit — Line 2/), {
+      target: { value: "100" },
+    });
 
     expect(screen.getByText("Balanced")).toBeDefined();
     // There is nothing to post yet: the entry has no server-side id.
@@ -228,7 +242,10 @@ describe("post gating", () => {
 describe("saving, posting, and server errors", () => {
   it("saves a draft with money as strings, never numbers", async () => {
     const { calls } = stubFetch([
-      { status: 201, body: { success: true, data: { journal_entry: entry() } } },
+      {
+        status: 201,
+        body: { success: true, data: { journal_entry: entry() } },
+      },
     ]);
 
     // An existing draft, so the lines already name their accounts — a line with no account is not
@@ -253,7 +270,10 @@ describe("saving, posting, and server errors", () => {
     const message =
       "Debits (100.0000) do not equal credits (90.0000); the entry is out of balance by 10.0000 KWD.";
     stubFetch([
-      { status: 422, body: { success: false, code: "BALANCE_MISMATCH", message } },
+      {
+        status: 422,
+        body: { success: false, code: "BALANCE_MISMATCH", message },
+      },
     ]);
 
     renderEditor(entry());
@@ -269,7 +289,10 @@ describe("saving, posting, and server errors", () => {
       { status: 500, body: { success: false, message: "Upstream failed." } },
       {
         status: 200,
-        body: { success: true, data: { journal_entry: entry({ status: "posted" }) } },
+        body: {
+          success: true,
+          data: { journal_entry: entry({ status: "posted" }) },
+        },
       },
     ]);
 

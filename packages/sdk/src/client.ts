@@ -5,6 +5,7 @@ import type {
   AccountTreeResult,
   AccountTypeListResult,
   CreateJournalEntryInput,
+  FiscalPeriodListResult,
   JournalEntryListResult,
   JournalEntryResult,
   ReverseJournalEntryInput,
@@ -240,6 +241,21 @@ export class QaydClient {
   /** `POST /companies` — an email-verified user with zero companies creates one and becomes its Owner. */
   createCompany(input: CreateCompanyInput): Promise<Envelope<CreateCompanyResult>> {
     return this.request<CreateCompanyResult>({ method: "POST", path: "/companies", body: input });
+  }
+
+  // — Accounting: fiscal periods (`/api/v1/accounting/fiscal-periods`) —
+
+  /**
+   * `GET /accounting/fiscal-periods` — the accounting calendar, read-only (accounting.journal.read).
+   * There is no write counterpart: closing, locking and reopening a period each have their own Action
+   * and permission on the server, and no client needs them in order to pick a period.
+   */
+  fiscalPeriods(companyId?: string): Promise<Envelope<FiscalPeriodListResult>> {
+    return this.request<FiscalPeriodListResult>({
+      method: "GET",
+      path: "/accounting/fiscal-periods",
+      companyId,
+    });
   }
 
   // — Accounting: journal entries (`/api/v1/accounting/journal-entries`) —

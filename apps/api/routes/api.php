@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Accounting\AccountController;
 use App\Http\Controllers\Accounting\AccountTypeController;
+use App\Http\Controllers\Accounting\FiscalPeriodController;
 use App\Http\Controllers\Accounting\JournalEntryController;
 use App\Http\Controllers\Accounting\LedgerController;
 use App\Http\Controllers\Accounting\TrialBalanceController;
@@ -77,6 +78,12 @@ Route::prefix('v1/accounting')
             // writes on it from the runtime role), and needed before an account can be created at all —
             // `account_type_id` is required and its ids are database-generated.
             Route::get('account-types', [AccountTypeController::class, 'index']);
+
+            // The accounting calendar, read-only (S2-12 prerequisite). A trial balance is computed for
+            // a period and period ids are database-generated, so a client that must send
+            // `fiscal_period_id` has to be able to enumerate them. Close/lock/reopen stay with their
+            // own Actions and permissions — there is deliberately no write counterpart here.
+            Route::get('fiscal-periods', [FiscalPeriodController::class, 'index']);
 
             Route::get('accounts', [AccountController::class, 'index']);
             Route::get('accounts/tree', [AccountController::class, 'tree']);
