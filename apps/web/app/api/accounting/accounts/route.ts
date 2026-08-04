@@ -21,7 +21,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   const session = await sessionClient();
   if (!session.ok) return session.response;
 
-  const parsed = createAccountInputSchema.safeParse(await readJsonBody(request));
+  const parsed = createAccountInputSchema.safeParse(
+    await readJsonBody(request),
+  );
   if (!parsed.success) {
     return validationResponse("Invalid account payload.");
   }
