@@ -41,6 +41,9 @@ final class RbacSeeder extends Seeder
         'accounting' => [
             'read', 'create', 'update', 'delete', 'export', 'approve', 'coa.manage', 'journal.read',
             'period.close', 'period.lock', 'period.reopen', 'period.hard_lock_override',
+            // `trial_balance.*` (S2-09): reading the numbers, freezing a durable snapshot, and putting
+            // a human signature on one are three different levels of authority.
+            'trial_balance.read', 'trial_balance.generate', 'trial_balance.approve',
         ],
         'bank' => ['read', 'create', 'update', 'delete', 'reconcile', 'transfer'],
         'payroll' => ['read', 'calculate', 'approve', 'release', 'export'],
@@ -87,16 +90,21 @@ final class RbacSeeder extends Seeder
             // Closes, locks and reopens months — but NOT accounting.period.hard_lock_override, which
             // stays with Owner/CEO/CFO (GENERAL_LEDGER.md "# Permissions" role matrix).
             'accounting.period.close', 'accounting.period.lock', 'accounting.period.reopen',
+            'accounting.trial_balance.read', 'accounting.trial_balance.generate', 'accounting.trial_balance.approve',
             'bank.reconcile', 'bank.create', 'bank.update', 'tax.calculate', 'tax.export',
             'reports.export', 'reports.share', 'documents.upload', 'ai.chat', 'ai.analyze',
         ]],
         'senior_accountant' => ['Senior Accountant', 'محاسب أول', [
             'accounting.read', 'accounting.journal.read', 'accounting.coa.manage', 'accounting.create', 'accounting.update', 'accounting.export',
+            // Prepares the trial balance but never signs it — approval is the manager's, which is the
+            // separation the whole approve step exists to create.
+            'accounting.trial_balance.read', 'accounting.trial_balance.generate',
             'bank.read', 'bank.reconcile', 'reports.read', 'reports.export', 'tax.read', 'tax.calculate',
             'documents.read', 'documents.upload', 'ai.chat', 'ai.analyze',
         ]],
         'accountant' => ['Accountant', 'محاسب', [
-            'accounting.read', 'accounting.journal.read', 'accounting.create', 'accounting.update', 'bank.read',
+            'accounting.read', 'accounting.journal.read', 'accounting.trial_balance.read',
+            'accounting.create', 'accounting.update', 'bank.read',
             'reports.read', 'documents.read', 'documents.upload', 'ai.chat',
         ]],
         'auditor' => ['Auditor', 'مدقق', ['reads', 'reports.export']],

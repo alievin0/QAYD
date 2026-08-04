@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Accounting\AccountController;
 use App\Http\Controllers\Accounting\LedgerController;
+use App\Http\Controllers\Accounting\TrialBalanceController;
 use App\Http\Controllers\Identity\CreateCompanyController;
 use App\Http\Controllers\Identity\LoginController;
 use App\Http\Controllers\Identity\LogoutController;
@@ -79,6 +80,24 @@ Route::prefix('v1/accounting')
             // `ledger_entries` and nothing on this path writes.
             Route::get('ledger/accounts/{account}/activity', [LedgerController::class, 'activity'])
                 ->whereNumber('account');
+        });
+
+        // S2-09 — trial balance. Reading a trial balance, generating a durable snapshot, and signing
+        // one are three different levels of authority over the same figures, so they take three
+        // permissions rather than sharing the generic accounting read.
+        Route::middleware('permission:accounting.trial_balance.read')->group(function (): void {
+            Route::get('reports/trial-balance', [TrialBalanceController::class, 'compute']);
+            Route::get('reports/trial-balance/{snapshot}', [TrialBalanceController::class, 'show'])
+                ->whereNumber('snapshot');
+        });
+
+        Route::middleware('permission:accounting.trial_balance.generate')->group(function (): void {
+            Route::post('reports/trial-balance', [TrialBalanceController::class, 'generate']);
+        });
+
+        Route::middleware('permission:accounting.trial_balance.approve')->group(function (): void {
+            Route::post('reports/trial-balance/{snapshot}/approve', [TrialBalanceController::class, 'approve'])
+                ->whereNumber('snapshot');
         });
 
         Route::middleware('permission:accounting.coa.manage')->group(function (): void {
