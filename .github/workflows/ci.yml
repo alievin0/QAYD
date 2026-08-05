@@ -85,6 +85,12 @@ jobs:
       DB_APP_PASSWORD: qayd_app_password
       REDIS_HOST: 127.0.0.1
       REDIS_PORT: 6379
+      # Throwaway field-encryption keys — the same class as the CI database passwords above: fixed
+      # literals so a run is reproducible, and worthless outside this ephemeral container. `FieldCipher`
+      # refuses to operate without keys rather than inventing one, so any test booting a model with an
+      # encrypted column needs them present. 32 raw bytes, base64-encoded.
+      FIELD_ENCRYPTION_KEY: Y2ktZmllbGQta2V5LTMyYmNpLWZpZWxkLWtleS0zMmI=
+      FIELD_INDEX_KEY: Y2ktaW5kZXgta2V5LTMyYmNpLWluZGV4LWtleS0zMmI=
     steps:
       - uses: actions/checkout@v4
 
