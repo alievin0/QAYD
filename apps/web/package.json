@@ -18,7 +18,9 @@
     "@qayd/shared": "workspace:*",
     "@qayd/types": "workspace:*",
     "@qayd/ui": "workspace:*",
+    "laravel-echo": "^2.4.0",
     "next": "^15.0.0",
+    "pusher-js": "^8.6.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

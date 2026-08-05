@@ -61,6 +61,7 @@ corrected by a new linked record, not an edit.
 | [0008](./0008-typescript-shared-packages.md) | Shared TypeScript types (web + SDK); the cross-service contract is Laravel's `/api/v1` (OpenAPI) | Accepted |
 | [0009](./0009-tailwind-shadcn-design-system.md) | Tailwind + shadcn/ui bound to the QAYD brass design tokens | Accepted |
 | [0010](./0010-auth-service-authoritative-for-identity-schema.md) | AUTH_SERVICE.md is authoritative over MULTI_TENANCY.md for the identity/RBAC schema | Accepted |
+| [0011](./0011-direct-refresh-broadcasts-pending-outbox.md) | Refresh-only broadcasts may be emitted directly until the transactional outbox exists (amends 0006) | Accepted |
 
 ## How to Add a New ADR
 

@@ -2,6 +2,10 @@
 
 namespace App\Providers;
 
+use App\Domain\Accounting\FiscalCalendarResolver;
+use App\Domain\Accounting\FiscalPeriodCalendarResolver;
+use App\Domain\Accounting\NoLedgerPostedActivityGuard;
+use App\Domain\Accounting\PostedActivityGuard;
 use App\Models\User;
 use App\Services\Identity\TokenService;
 use Illuminate\Http\Request;
@@ -15,7 +19,18 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // Chart-of-accounts posted-activity guard (S2-01). Until the ledger exists (S2-03 / S2-05) no
+        // account can carry posted lines; the posting stories replace this binding with a ledger-backed
+        // implementation without touching the Actions.
+        $this->app->bind(PostedActivityGuard::class, NoLedgerPostedActivityGuard::class);
+
+        // Fiscal-calendar seam (S2-05 → S2-07). The posting engine depends only on the
+        // FiscalCalendarResolver interface, never on fiscal_years/fiscal_periods directly — which is what
+        // let S2-07 swap the year-level resolver for the period-level one below without changing a line
+        // of JournalEntryPostingService. The period resolver also narrows the posting lock from the
+        // fiscal YEAR row to the PERIOD row (TD-13), so postings into different months no longer
+        // serialize against each other.
+        $this->app->bind(FiscalCalendarResolver::class, FiscalPeriodCalendarResolver::class);
     }
 
     /**

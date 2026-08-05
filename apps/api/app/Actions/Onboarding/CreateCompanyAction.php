@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Actions\Onboarding;
 
 use App\Data\Onboarding\CreateCompanyData;
+use App\Domain\Accounting\MonthlyFiscalPeriodGenerator;
 use App\Domain\Onboarding\CreatedCompany;
 use App\Enums\AuditCategory;
 use App\Models\Company;
@@ -24,7 +25,8 @@ use RuntimeException;
  *  2. the creator's `company_users` **owner membership**, bound to the seeded **Owner system role**
  *     (`company_id IS NULL`, from S1-09) — so the creator holds the Owner role's full permission grant;
  *  3. the company's **first `fiscal_years` row**, derived from the fiscal-year start month, opened for
- *     posting.
+ *     posting, together with the monthly **`fiscal_periods`** filling it — the posting engine resolves a
+ *     date to a period, so a year without periods accepts nothing (S2-07).
  *
  * Then it writes a `company.created` audit row. Everything runs inside a single transaction so a
  * half-created company can never exist (SPRINT_01 Epic D: "transactionally, so a half-created company can
@@ -93,9 +95,13 @@ final class CreateCompanyAction
                     'updated_at' => $now,
                 ]);
 
-                // 3) The first fiscal year, derived from the fiscal-year start month and opened for posting.
+                // 3) The first fiscal year, derived from the fiscal-year start month and opened for
+                //    posting — plus the monthly fiscal PERIODS that fill it. Since S2-07 the posting
+                //    engine resolves a date to a period, not a year, so a year without periods is a year
+                //    nothing can be posted into: generating them is part of creating a usable year, not
+                //    an optional extra, and it belongs in this same transaction.
                 $fiscalYear = $this->firstFiscalYear($data->fiscalYearStartMonth);
-                $connection->table('fiscal_years')->insert([
+                $fiscalYearId = (int) $connection->table('fiscal_years')->insertGetId([
                     'company_id' => $companyId,
                     'name' => $fiscalYear['name'],
                     'start_date' => $fiscalYear['start'],
@@ -106,6 +112,16 @@ final class CreateCompanyAction
                     'created_at' => $now,
                     'updated_at' => $now,
                 ]);
+
+                MonthlyFiscalPeriodGenerator::generate(
+                    connection: $connection,
+                    companyId: $companyId,
+                    fiscalYearId: $fiscalYearId,
+                    startDate: $fiscalYear['start'],
+                    endDate: $fiscalYear['end'],
+                    yearStatus: 'open',
+                    actorUserId: $creatorId,
+                );
 
                 // 4) Audit the creation. Written on this same owner connection (past RLS) with the new
                 //    company_id, inside the transaction — so a failed audit rolls the company back too.

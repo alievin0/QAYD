@@ -35,7 +35,16 @@ final class RbacSeeder extends Seeder
      * @var array<string, list<string>>
      */
     private const CATALOGUE = [
-        'accounting' => ['read', 'create', 'update', 'delete', 'export', 'approve'],
+        // `period.*` (S2-07) is split four ways on purpose: closing a month, hard-locking it after audit
+        // sign-off, reopening a closed one, and overriding a hard lock are four different levels of
+        // authority over the same record (GENERAL_LEDGER.md "# Permissions").
+        'accounting' => [
+            'read', 'create', 'update', 'delete', 'export', 'approve', 'coa.manage', 'journal.read',
+            'period.close', 'period.lock', 'period.reopen', 'period.hard_lock_override',
+            // `trial_balance.*` (S2-09): reading the numbers, freezing a durable snapshot, and putting
+            // a human signature on one are three different levels of authority.
+            'trial_balance.read', 'trial_balance.generate', 'trial_balance.approve',
+        ],
         'bank' => ['read', 'create', 'update', 'delete', 'reconcile', 'transfer'],
         'payroll' => ['read', 'calculate', 'approve', 'release', 'export'],
         'inventory' => ['read', 'create', 'adjust', 'transfer', 'delete'],
@@ -77,17 +86,25 @@ final class RbacSeeder extends Seeder
             'reports.*', 'documents.*', 'ai.*', 'purchasing.approve', 'sales.approve',
         ]],
         'finance_manager' => ['Finance Manager', 'مدير المالية', [
-            'reads', 'accounting.create', 'accounting.update', 'accounting.export', 'accounting.approve',
+            'reads', 'accounting.coa.manage', 'accounting.create', 'accounting.update', 'accounting.export', 'accounting.approve',
+            // Closes, locks and reopens months — but NOT accounting.period.hard_lock_override, which
+            // stays with Owner/CEO/CFO (GENERAL_LEDGER.md "# Permissions" role matrix).
+            'accounting.period.close', 'accounting.period.lock', 'accounting.period.reopen',
+            'accounting.trial_balance.read', 'accounting.trial_balance.generate', 'accounting.trial_balance.approve',
             'bank.reconcile', 'bank.create', 'bank.update', 'tax.calculate', 'tax.export',
             'reports.export', 'reports.share', 'documents.upload', 'ai.chat', 'ai.analyze',
         ]],
         'senior_accountant' => ['Senior Accountant', 'محاسب أول', [
-            'accounting.read', 'accounting.create', 'accounting.update', 'accounting.export',
+            'accounting.read', 'accounting.journal.read', 'accounting.coa.manage', 'accounting.create', 'accounting.update', 'accounting.export',
+            // Prepares the trial balance but never signs it — approval is the manager's, which is the
+            // separation the whole approve step exists to create.
+            'accounting.trial_balance.read', 'accounting.trial_balance.generate',
             'bank.read', 'bank.reconcile', 'reports.read', 'reports.export', 'tax.read', 'tax.calculate',
             'documents.read', 'documents.upload', 'ai.chat', 'ai.analyze',
         ]],
         'accountant' => ['Accountant', 'محاسب', [
-            'accounting.read', 'accounting.create', 'accounting.update', 'bank.read',
+            'accounting.read', 'accounting.journal.read', 'accounting.trial_balance.read',
+            'accounting.create', 'accounting.update', 'bank.read',
             'reports.read', 'documents.read', 'documents.upload', 'ai.chat',
         ]],
         'auditor' => ['Auditor', 'مدقق', ['reads', 'reports.export']],
@@ -121,7 +138,7 @@ final class RbacSeeder extends Seeder
         ]],
         'read_only' => ['Read Only', 'قراءة فقط', ['reads']],
         'external_auditor' => ['External Auditor', 'مدقق خارجي', [
-            'accounting.read', 'bank.read', 'reports.read', 'reports.export', 'tax.read', 'documents.read',
+            'accounting.read', 'accounting.journal.read', 'bank.read', 'reports.read', 'reports.export', 'tax.read', 'documents.read',
         ]],
     ];
 

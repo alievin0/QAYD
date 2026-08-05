@@ -58,8 +58,10 @@ password that both the migrate/seed steps and the pest `rls,isolation` group con
 
 ## Triggers
 
-`pull_request` to `main` / `sprint-01-foundations`, `push` to the same protected branches, and manual
-`workflow_dispatch`. A concurrency group cancels superseded in-flight runs per ref.
+`pull_request` targeting `main` or any sprint working branch (`sprint-**`), `push` to the same
+branch set, and manual `workflow_dispatch`. The `sprint-**` glob gates every sprint branch
+(`sprint-02-accounting-core`, and onward) without editing the workflow each sprint. A concurrency
+group cancels superseded in-flight runs per ref.
 
 ## Local equivalent
 
