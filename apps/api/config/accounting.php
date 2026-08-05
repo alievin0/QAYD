@@ -30,4 +30,16 @@ return [
          */
         'rounding_tolerance' => env('TRIAL_BALANCE_ROUNDING_TOLERANCE', '0.0050'),
     ],
+
+    'integrity' => [
+
+        /*
+         * The queue the nightly ledger rebuild runs on (SPRINT_02 §S2-14).
+         *
+         * Its own queue rather than `reports`, because the two fail differently: a slow trial balance
+         * keeps someone waiting at a screen, a slow integrity rebuild keeps nobody waiting at all, and
+         * neither should be able to starve the other of workers.
+         */
+        'queue' => env('LEDGER_INTEGRITY_QUEUE', 'maintenance'),
+    ],
 ];
