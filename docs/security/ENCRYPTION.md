@@ -175,7 +175,8 @@ columns that carry standalone financial-account or government-identifier risk.
 | Table.Column | Class | Encrypted | Notes |
 |---|---|---|---|
 | `bank_accounts.account_number` | Restricted | Yes | Plus a blind index for reconciliation matching (see below) |
-| `bank_accounts.iban` | Restricted | Yes | — |
+| `bank_accounts.iban` | Restricted | Yes | Plus a blind index (`iban_bidx`); uniqueness is enforced on `(company_id, iban_bidx)`, never on the ciphertext |
+| `bank_transactions.payee_payer_iban` | Restricted | Yes | Plus a blind index; reconciliation matches it by EQUALITY only — the counterparty *similarity* signal reads `payee_payer_name`, which is not encrypted |
 | `bank_credentials.secret` | Restricted | Yes | Online-banking / open-banking tokens; encrypted then the row is RLS-locked to Treasury |
 | `employees.national_id` | Restricted | Yes | Civil ID / Iqama / national number |
 | `employees.passport_no` | Restricted | Yes | — |
@@ -264,6 +265,31 @@ index enables exact-match lookup without ever storing or exposing the plaintext,
 HMAC key differs from the encryption key, leaking the index does not reveal the values and leaking
 the ciphertext does not reveal the index. Range queries and `LIKE` are not supported on encrypted
 columns by design — a requirement for either is a signal that the column was mis-classified.
+
+**The rule, project-wide, for any encrypted identifier a feature needs to match on:**
+
+- **Equality semantics → a blind index.** Store the keyed HMAC in a sibling `*_bidx` column and match,
+  join, and enforce uniqueness on *that*. Never on the ciphertext: a random nonce means equal plaintexts
+  produce unequal ciphertexts, so a `UNIQUE` constraint over an encrypted column does not fail closed —
+  it silently never fires, which is worse than having no constraint, because the schema reads as though
+  the guarantee exists.
+- **Similarity semantics → not on the encrypted column at all.** Fuzzy, phonetic, `LIKE`, and range
+  matching are impossible over ciphertext and *unfixable* by a blind index: HMAC is exact-or-nothing, and
+  two inputs differing by one character produce entirely unrelated digests. When a feature needs a
+  similarity signal, that signal must come from a **different, non-encrypted attribute** — not from
+  decrypting rows to compare them in application memory, and not from searchable-encryption schemes,
+  both of which trade the classification away to buy the match.
+
+The worked example is bank reconciliation's counterparty rule. It wants "same counterparty", and the
+obvious column is `payee_payer_iban` — which is Restricted. So the rule splits along what each column can
+actually support: the IBAN contributes an **exact** match through its blind index, and the **fuzzy** half
+reads `payee_payer_name`, which carries no standalone financial-account risk and is therefore not
+encrypted. The rule's weight is unchanged, and the IBAN signal is stronger than it would have been fuzzy —
+an exact IBAN match is better evidence of the same counterparty than an approximate one.
+
+A feature that cannot be expressed under these two options has either mis-classified its column or
+mis-specified its rule. Resolve it there, in the classification or the rule, never by weakening the
+encryption.
 
 ```php
 // Deterministic, keyed index for exact-match lookup on an encrypted column.
