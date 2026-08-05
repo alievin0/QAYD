@@ -173,6 +173,23 @@ jobs:
       - name: Build (next build)
         run: pnpm --filter web run build
 
+      # End-to-end runs AFTER the build, against `next start` — a production build, not dev mode, so a
+      # compile race cannot masquerade as a test failure. Chromium only, and no database service: the
+      # specs talk to a stub upstream, which is what keeps this deterministic enough to gate on.
+      - name: Install Chromium for Playwright
+        run: pnpm --filter web exec playwright install --with-deps chromium
+
+      - name: End-to-end (playwright)
+        run: pnpm --filter web run test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7
+
   # ---------------------------------------------------------------------------
   # AI engine — FastAPI / Python 3.12 (uv). Health-route only this sprint;
   # carries its lint/type/test gates so quality is enforced from the first PR.
