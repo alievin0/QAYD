@@ -20,6 +20,14 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
+    // S2-13 broadcast channel authorization. Registered under the `api` prefix and the `api` middleware
+    // group with `auth:web,jwt`, so a socket subscription proves identity exactly the way a request
+    // does — the default `/broadcasting/auth` sits on the `web` guard alone, which the bearer clients
+    // (and the Next.js BFF, which is what actually holds the token) cannot satisfy.
+    ->withBroadcasting(
+        __DIR__.'/../routes/channels.php',
+        attributes: ['prefix' => 'api', 'middleware' => ['api', 'auth:web,jwt']],
+    )
     ->withMiddleware(function (Middleware $middleware): void {
         // Applied per tenant-scoped route group (not globally) so unauthenticated routes such as
         // the health check stay reachable. Once auth (S1-08) lands it is appended to the tenant API.
