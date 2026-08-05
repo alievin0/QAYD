@@ -4,9 +4,11 @@ namespace App\Providers;
 
 use App\Domain\Accounting\FiscalCalendarResolver;
 use App\Domain\Accounting\FiscalPeriodCalendarResolver;
+use App\Domain\Accounting\JournalPoster;
 use App\Domain\Accounting\NoLedgerPostedActivityGuard;
 use App\Domain\Accounting\PostedActivityGuard;
 use App\Models\User;
+use App\Services\Accounting\PostingEngineJournalPoster;
 use App\Services\Identity\TokenService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -31,6 +33,12 @@ class AppServiceProvider extends ServiceProvider
         // fiscal YEAR row to the PERIOD row (TD-13), so postings into different months no longer
         // serialize against each other.
         $this->app->bind(FiscalCalendarResolver::class, FiscalPeriodCalendarResolver::class);
+
+        // Cross-module posting seam (S3-03 prerequisite). Banking clears a transaction by posting a
+        // balanced journal, and it does that through this interface — never through the Actions, the
+        // JournalEntry model, or journal_lines. Accounting therefore keeps the ledger's only entrance,
+        // and Banking cannot acquire a second one by reaching for something it was never given.
+        $this->app->bind(JournalPoster::class, PostingEngineJournalPoster::class);
     }
 
     /**
